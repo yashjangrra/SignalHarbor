@@ -1,11 +1,8 @@
 """Moltbook API client — scout projects and post agent reports."""
 
-import json
-import time
 import logging
 import hashlib
-from datetime import datetime, timezone
-from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -20,34 +17,55 @@ log = logging.getLogger("surgescout.moltbook")
 class MoltbookClient:
     """Read from and write to Moltbook submolts."""
 
-    def __init__(self, base_url: str = "", submolt: str = ""):
+    def __init__(self, base_url: str = "", submolt: str = "", auth_token: str = ""):
         self.base_url = (base_url or config.MOLTBOOK_API_URL).rstrip("/")
         self.submolt = submolt or config.MOLTBOOK_SUBMOLT
-        self._http = httpx.Client(timeout=30, follow_redirects=True)
+        self.auth_token = auth_token or getattr(config, "MOLTBOOK_AUTH_TOKEN", "")
+        if self.base_url.endswith("/api/v1"):
+            self.base_url = self.base_url[:-7]
+        self._http = httpx.Client(timeout=30, follow_redirects=False)
+
+    def close(self):
+        self._http.close()
+
+    def _headers(self) -> dict:
+        # Credentials are only valid for the official HTTPS API origin.
+        origin = urlparse(self.base_url)
+        if self.auth_token and (origin.scheme, origin.netloc, origin.path) != ("https", "www.moltbook.com", ""):
+            raise ValueError("Moltbook credentials require https://www.moltbook.com")
+        return {"Authorization": f"Bearer {self.auth_token}"} if self.auth_token else {}
+
+    @staticmethod
+    def _posts(data, key="posts") -> list[dict]:
+        if isinstance(data, dict):
+            data = data.get(key, data.get("data", []))
+            if isinstance(data, dict):
+                data = data.get(key, [])
+        return [p for p in data if isinstance(p, dict)] if isinstance(data, list) else []
 
     # ------ read ------
 
     def fetch_posts(self, submolt: str = "", limit: int = 50, sort: str = "new") -> list[dict]:
         """Fetch recent posts from a submolt."""
         sub = submolt or self.submolt
-        url = f"{self.base_url}/api/v1/submolts/{sub}/posts"
+        url = f"{self.base_url}/api/v1/posts"
         try:
-            r = self._http.get(url, params={"limit": limit, "sort": sort})
+            r = self._http.get(url, params={"submolt": sub, "limit": limit, "sort": sort}, headers=self._headers())
             r.raise_for_status()
             data = r.json()
-            return data if isinstance(data, list) else data.get("posts", data.get("data", []))
+            return self._posts(data)
         except Exception as e:
             log.warning(f"Moltbook fetch failed ({sub}): {e}")
             return []
 
     def fetch_trending(self, limit: int = 30) -> list[dict]:
         """Fetch trending posts across Moltbook."""
-        url = f"{self.base_url}/api/v1/posts/trending"
+        url = f"{self.base_url}/api/v1/posts"
         try:
-            r = self._http.get(url, params={"limit": limit})
+            r = self._http.get(url, params={"limit": limit, "sort": "hot"}, headers=self._headers())
             r.raise_for_status()
             data = r.json()
-            return data if isinstance(data, list) else data.get("posts", data.get("data", []))
+            return self._posts(data)
         except Exception as e:
             log.warning(f"Moltbook trending fetch failed: {e}")
             return []
@@ -56,10 +74,10 @@ class MoltbookClient:
         """Search Moltbook posts by keyword."""
         url = f"{self.base_url}/api/v1/search"
         try:
-            r = self._http.get(url, params={"q": query, "limit": limit, "type": "posts"})
+            r = self._http.get(url, params={"q": query, "limit": limit, "type": "posts"}, headers=self._headers())
             r.raise_for_status()
             data = r.json()
-            return data if isinstance(data, list) else data.get("results", data.get("data", []))
+            return self._posts(data, "results")
         except Exception as e:
             log.warning(f"Moltbook search failed: {e}")
             return []
@@ -67,16 +85,19 @@ class MoltbookClient:
     # ------ write ------
 
     def post_update(self, title: str, body: str, submolt: str = "") -> dict:
-        """Post an update to a submolt (requires agent auth via OpenClaw)."""
+        """Submit an authenticated report; preserve verification challenges in response."""
+        if not self.auth_token:
+            return {"error": "MOLTBOOK_AUTH_TOKEN is required to publish reports"}
         sub = submolt or self.submolt
-        url = f"{self.base_url}/api/v1/submolts/{sub}/posts"
+        url = f"{self.base_url}/api/v1/posts"
         payload = {
             "title": title,
-            "body": body,
+            "content": body,
+            "submolt_name": sub,
             "type": "text",
         }
         try:
-            r = self._http.post(url, json=payload)
+            r = self._http.post(url, json=payload, headers=self._headers())
             r.raise_for_status()
             return r.json()
         except Exception as e:
@@ -84,19 +105,22 @@ class MoltbookClient:
             return {"error": str(e)}
 
     def fetch_user_posts(self, username: str, limit: int = 30) -> list[dict]:
-        """Fetch posts by a specific user via search API.
-
-        The search query is specific enough (project name) that all results
-        are relevant. Moltbook search API doesn't always include author details,
-        so we skip strict author filtering.
-        """
-        return self.search_posts(username, limit=limit)
+        """Fetch a specific author profile and its recent posts."""
+        try:
+            r = self._http.get(f"{self.base_url}/api/v1/agents/profile", params={"name": username}, headers=self._headers())
+            r.raise_for_status()
+            return self._posts(r.json(), "recentPosts")[:limit]
+        except Exception as e:
+            log.warning("Moltbook profile fetch failed: %s", e)
+            return []
 
     def post_comment(self, post_id: str, body: str) -> dict:
         """Comment on an existing post."""
+        if not self.auth_token:
+            return {"error": "MOLTBOOK_AUTH_TOKEN is required to comment"}
         url = f"{self.base_url}/api/v1/posts/{post_id}/comments"
         try:
-            r = self._http.post(url, json={"body": body})
+            r = self._http.post(url, json={"content": body}, headers=self._headers())
             r.raise_for_status()
             return r.json()
         except Exception as e:
@@ -181,6 +205,13 @@ def extract_projects_from_posts(posts: list[dict]) -> list[dict]:
 def scout_moltbook(submolts: list[str] | None = None, keywords: list[str] | None = None) -> list[dict]:
     """Full scouting pipeline: fetch from multiple sources and extract projects."""
     client = MoltbookClient()
+    try:
+        return _scout_with_client(client, submolts, keywords)
+    finally:
+        client.close()
+
+
+def _scout_with_client(client, submolts, keywords):
     all_posts = []
 
     # 1. Fetch from target submolts (new + hot for variety)

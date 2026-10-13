@@ -16,6 +16,8 @@ AI_MODEL = os.getenv("AI_MODEL", "")
 
 # Moltbook
 MOLTBOOK_API_URL = os.getenv("MOLTBOOK_API_URL", "https://www.moltbook.com")
+MOLTBOOK_AUTH_TOKEN = os.getenv("MOLTBOOK_AUTH_TOKEN", "")
+MOLTBOOK_AGENT_NAME = os.getenv("MOLTBOOK_AGENT_NAME", "surgescout")
 MOLTBOOK_SUBMOLT = os.getenv("MOLTBOOK_SUBMOLT", "lablab")
 
 # SURGE / On-chain

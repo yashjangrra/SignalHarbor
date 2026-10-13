@@ -1,3 +1,5 @@
+> Historical illustrative integration notes: endpoints below are unverified and must not be used to deploy or send wallet secrets. Current SurgeScout prepares configuration only. Verify official contracts before future implementation.
+
 # SURGE Integration Reference
 
 ## What is SURGE?

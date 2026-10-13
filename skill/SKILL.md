@@ -1,6 +1,6 @@
 ---
 name: surgescout
-description: AI Deal Flow Agent for Internet Capital Markets — scouts Moltbook for promising projects, analyzes their tokenization potential, and launches tokens via SURGE.
+description: AI Deal Flow Agent for Internet Capital Markets — scouts Moltbook for promising projects, analyzes their tokenization potential, and prepares token proposals.
 version: 1.0.0
 author: Viksit Garg
 tags: [surge, moltbook, icm, tokenization, defi, deal-flow]
@@ -25,7 +25,7 @@ You operate on a repeating cycle: **Scout → Analyze → Advise → Launch → 
 
 3. **Advise** — Generate tokenomics recommendations: ticker, supply, bonding curve type, initial price, and rationale.
 
-4. **Launch** — For projects scoring STRONG_LAUNCH or PROMISING, prepare token launch configurations for the SURGE launchpad on Base or Solana.
+4. **Prepare** — For projects scoring STRONG_LAUNCH or PROMISING, prepare token launch configurations for the SURGE launchpad on Base or Solana.
 
 5. **Report** — Post analysis reports and launch updates back to Moltbook (m/lablab submolt) so the community can see your findings.
 
@@ -64,7 +64,7 @@ curl -X POST http://localhost:8899/api/analyze \
   -d '{"min_score": 40}'
 ```
 
-**Launch a token:**
+**Prepare a launch proposal:**
 ```bash
 curl -X POST http://localhost:8899/api/launch \
   -H "Content-Type: application/json" \
@@ -81,9 +81,9 @@ curl -X POST http://localhost:8899/api/moltbook/report \
 **View dashboard:**
 Open `http://localhost:8899` in a browser.
 
-## Scheduled Tasks
+## Optional Scheduled Tasks
 
-Set up a cron job to run the pipeline every 4 hours:
+After explicit user authorization, set up a cron job to run the pipeline every 4 hours:
 
 ```
 Schedule: every 4 hours
@@ -99,7 +99,7 @@ This keeps the agent continuously discovering and analyzing new projects.
 - When the user asks to "launch" or "deploy" a token → run the launch endpoint
 - When the user asks to "report" or "post to Moltbook" → run the moltbook/report endpoint
 - When the user asks to "run the pipeline" → run the full pipeline endpoint
-- Every 4 hours autonomously → run the full pipeline via cron
+- Only schedule recurring runs when the user explicitly authorizes the schedule and provider usage.
 
 ## Scoring Model
 
@@ -114,7 +114,7 @@ Each project is scored on 5 dimensions (0-100):
 | Traction | Votes, comments, social buzz on Moltbook |
 
 Verdicts:
-- **STRONG_LAUNCH** (score >= 75) — Ready for immediate token launch
+- **STRONG_LAUNCH** (score >= 75) — Highest model-assessed potential; requires human review
 - **PROMISING** (score 50-74) — Worth watching, may launch with improvements
 - **NEEDS_WORK** (score 25-49) — Not ready, provide feedback
 - **SKIP** (score < 25) — No tokenization potential
@@ -161,3 +161,5 @@ When posting to Moltbook, use this format:
 - The SURGE launchpad is the primary deployment target
 - Post updates to m/lablab submolt for hackathon compliance
 - Tag @lablabai and @Surgexyz_ when sharing on X/Twitter
+
+The launch endpoint prepares configuration only: it does not deploy tokens. Demo reports must never be published. Model scores are opinions from supplied posts, not verified GitHub or market measurements. Publishing requires MOLTBOOK_AUTH_TOKEN and may return a verification challenge.

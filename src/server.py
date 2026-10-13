@@ -1,6 +1,9 @@
 """SurgeScout API server — FastAPI backend powering the agent and dashboard."""
 
 import json
+import asyncio
+import copy
+import threading
 import logging
 import os
 from datetime import datetime, timezone
@@ -11,7 +14,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import config
 from .moltbook import MoltbookClient, scout_moltbook, extract_projects_from_posts
@@ -41,27 +44,52 @@ _state = {
     "moltbook_posts": [],
     "last_scout": None,
     "last_analysis": None,
+    "demo_mode": False,
 }
 
 DATA_FILE = os.path.join(config.DATA_DIR, "state.json")
 
 
+_state_lock = threading.RLock()
+_mutation_lock = asyncio.Lock()
+_demo_snapshot = None
+
+
+@app.middleware("http")
+async def serialize_mutations(request: Request, call_next):
+    # Keep a single pipeline/state writer while read routes remain responsive.
+    if request.method == "POST":
+        async with _mutation_lock:
+            return await call_next(request)
+    return await call_next(request)
+
+
 def _save_state():
-    try:
-        with open(DATA_FILE, "w") as f:
-            json.dump(_state, f, indent=2, default=str)
-    except Exception as e:
-        log.warning(f"Failed to save state: {e}")
+    with _state_lock:
+        temporary = DATA_FILE + ".tmp"
+        try:
+            with open(temporary, "w", encoding="utf-8") as f:
+                json.dump(_demo_snapshot if _state.get("demo_mode") and _demo_snapshot is not None else _state, f, indent=2, default=str)
+            os.replace(temporary, DATA_FILE)
+        except OSError as e:
+            log.error("Failed to persist state: %s", e)
+            raise HTTPException(500, "State could not be saved") from e
 
 
 def _load_state():
-    global _state
     if os.path.exists(DATA_FILE):
         try:
-            with open(DATA_FILE) as f:
-                _state = json.load(f)
-        except Exception:
-            pass
+            with open(DATA_FILE, encoding="utf-8") as f:
+                saved = json.load(f)
+            if not isinstance(saved, dict):
+                raise ValueError("State must be an object")
+            for key, default in _state.items():
+                value = saved.get(key, default)
+                if isinstance(default, list) and not isinstance(value, list):
+                    raise ValueError(f"Invalid state field: {key}")
+                _state[key] = value
+        except (OSError, ValueError) as e:
+            log.warning("Could not load state: %s", e)
 
 
 _load_state()
@@ -79,18 +107,18 @@ class ScoutRequest(BaseModel):
 class AnalyzeRequest(BaseModel):
     project: dict | None = None
     project_id: str | None = None
-    min_score: int = 0
+    min_score: int = Field(default=0, ge=0, le=100)
 
 
 class LaunchRequest(BaseModel):
     analysis_index: int | None = None
     project_name: str | None = None
-    chain: str = "base"
+    chain: str = Field(default="base", pattern="^(base|solana)$")
 
 
 class MoltbookPostRequest(BaseModel):
-    title: str
-    body: str
+    title: str = Field(min_length=1, max_length=300)
+    body: str = Field(min_length=1, max_length=40000)
     submolt: str = ""
 
 
@@ -103,7 +131,7 @@ app.mount("/static", StaticFiles(directory=str(_web_dir)), name="static")
 
 
 @app.get("/favicon.ico")
-async def favicon():
+def favicon():
     """Serve favicon."""
     icon = _web_dir / "logo.png"
     if icon.exists():
@@ -112,7 +140,7 @@ async def favicon():
 
 
 @app.get("/")
-async def index():
+def index():
     """Serve the dashboard."""
     html_path = _web_dir / "index.html"
     if html_path.exists():
@@ -121,10 +149,12 @@ async def index():
 
 
 @app.get("/api/health")
-async def health():
-    has_key = bool(config.ANTHROPIC_API_KEY or config.OPENAI_API_KEY)
+def health():
+    has_key = bool(config.OPENAI_API_KEY if config.AI_PROVIDER == "openai" else config.ANTHROPIC_API_KEY)
     return {
         "status": "ok",
+        "launch_mode": "preparation_only",
+        "demo_mode": _state.get("demo_mode", False),
         "provider": config.AI_PROVIDER,
         "api_key_configured": has_key,
         "projects_scouted": len(_state["scouted_projects"]),
@@ -134,24 +164,25 @@ async def health():
 
 
 @app.get("/api/state")
-async def get_state():
+def get_state():
     """Return full agent state with computed fields."""
     launch_ready = sum(
         1 for a in _state.get("analyses", [])
         if a.get("verdict") == "STRONG_LAUNCH" and a.get("overall_score", 0) >= 75
     )
-    return {**_state, "launch_ready_count": launch_ready}
+    return copy.deepcopy({**_state, "launch_ready_count": launch_ready})
 
 
 # ------ Scout ------
 
 @app.post("/api/scout")
-async def scout(req: ScoutRequest):
+def scout(req: ScoutRequest):
     """Scout Moltbook for promising projects."""
     projects = scout_moltbook(
         submolts=req.submolts,
         keywords=req.keywords,
     )
+    _state["demo_mode"] = False
     _state["scouted_projects"] = projects
     _state["last_scout"] = datetime.now(timezone.utc).isoformat()
     _save_state()
@@ -164,10 +195,14 @@ async def scout(req: ScoutRequest):
 # ------ Analyze ------
 
 @app.post("/api/analyze")
-async def analyze(req: AnalyzeRequest):
+def analyze(req: AnalyzeRequest):
     """Analyze a project or all scouted projects."""
     if req.project:
         result = analyze_project(req.project)
+        if result.get("error"):
+            raise HTTPException(502, result["error"])
+        _state["demo_mode"] = False
+        _state["last_analysis"] = datetime.now(timezone.utc).isoformat()
         _state["analyses"].append(result)
         _save_state()
         return result
@@ -180,6 +215,10 @@ async def analyze(req: AnalyzeRequest):
         if not proj:
             raise HTTPException(404, f"Project {req.project_id} not found in scouted list")
         result = analyze_project(proj)
+        if result.get("error"):
+            raise HTTPException(502, result["error"])
+        _state["demo_mode"] = False
+        _state["last_analysis"] = datetime.now(timezone.utc).isoformat()
         _state["analyses"].append(result)
         _save_state()
         return result
@@ -189,6 +228,7 @@ async def analyze(req: AnalyzeRequest):
         raise HTTPException(400, "No scouted projects. Run /api/scout first.")
 
     results = analyze_batch(_state["scouted_projects"], min_score=req.min_score)
+    _state["demo_mode"] = False
     _state["analyses"] = results
     _state["last_analysis"] = datetime.now(timezone.utc).isoformat()
     _save_state()
@@ -199,13 +239,13 @@ async def analyze(req: AnalyzeRequest):
 
 
 @app.get("/api/analyses")
-async def list_analyses():
+def list_analyses():
     """List all completed analyses."""
     return _state["analyses"]
 
 
 @app.get("/api/report/{index}")
-async def get_report(index: int):
+def get_report(index: int):
     """Get a human-readable report for an analysis."""
     if index < 0 or index >= len(_state["analyses"]):
         raise HTTPException(404, "Analysis not found")
@@ -216,7 +256,7 @@ async def get_report(index: int):
 # ------ Launch ------
 
 @app.post("/api/launch")
-async def launch(req: LaunchRequest):
+def launch(req: LaunchRequest):
     """Launch a token based on analysis results."""
     analysis = None
 
@@ -248,7 +288,7 @@ async def launch(req: LaunchRequest):
 
 
 @app.get("/api/launches")
-async def list_launches():
+def list_launches():
     """List all token launches."""
     return _state["launches"]
 
@@ -256,10 +296,15 @@ async def list_launches():
 # ------ Moltbook ------
 
 @app.post("/api/moltbook/post")
-async def moltbook_post(req: MoltbookPostRequest):
+def moltbook_post(req: MoltbookPostRequest):
     """Post an update to Moltbook."""
     client = MoltbookClient()
-    result = client.post_update(req.title, req.body, req.submolt)
+    try:
+        result = client.post_update(req.title, req.body, req.submolt)
+    finally:
+        client.close()
+    if result.get("error"):
+        raise HTTPException(502, result["error"])
     _state["moltbook_posts"].append({
         "title": req.title,
         "body": req.body[:200],
@@ -271,10 +316,13 @@ async def moltbook_post(req: MoltbookPostRequest):
 
 
 @app.get("/api/moltbook/posts")
-async def moltbook_user_posts():
+def moltbook_user_posts():
     """Fetch surgescout's published posts from Moltbook."""
     client = MoltbookClient()
-    posts = client.fetch_user_posts("surgescout", limit=30)
+    try:
+        posts = client.fetch_user_posts(config.MOLTBOOK_AGENT_NAME, limit=30)
+    finally:
+        client.close()
     # Normalize each post to a consistent shape
     result = []
     for p in posts:
@@ -293,31 +341,42 @@ async def moltbook_user_posts():
             "body": (body or "")[:300],
             "created_at": created,
             "submolt": sub_name,
-            "url": f"https://www.moltbook.com/post/{short_id}" if short_id else "",
+            "url": f"https://www.moltbook.com/post/{post_id}" if short_id else "",
             "votes": p.get("votes", p.get("upvotes", 0)),
         })
-    return {"posts": result, "count": len(result)}
+    return {"posts": result, "count": len(result), "demo_mode": False}
 
 
 @app.post("/api/moltbook/report")
-async def moltbook_report(req: AnalyzeRequest):
+def moltbook_report(req: AnalyzeRequest):
     """Generate and post a report to Moltbook for the best analysis."""
     if not _state["analyses"]:
         raise HTTPException(400, "No analyses available. Run /api/analyze first.")
 
-    idx = 0
+    idx = max(range(len(_state["analyses"])), key=lambda i: _state["analyses"][i].get("overall_score", 0))
     if req.project_id:
         for i, a in enumerate(_state["analyses"]):
             if a.get("project_name") == req.project_id:
                 idx = i
                 break
+        else:
+            raise HTTPException(404, "Analysis not found")
 
     analysis = _state["analyses"][idx]
     report = generate_launch_report(analysis)
 
+    if _state.get("demo_mode"):
+        raise HTTPException(409, "Demo reports cannot be published")
     client = MoltbookClient()
     title = f"[SurgeScout] Analysis: {analysis.get('project_name', '?')} — {analysis.get('verdict', '?')}"
-    result = client.post_update(title, report)
+    if _state.get("demo_mode"):
+        raise HTTPException(409, "Demo reports cannot be published")
+    try:
+        result = client.post_update(title, report)
+    finally:
+        client.close()
+    if result.get("error"):
+        raise HTTPException(502, result["error"])
 
     _state["moltbook_posts"].append({
         "title": title,
@@ -577,10 +636,14 @@ DEMO_ANALYSES = [
 
 
 @app.post("/api/demo")
-async def load_demo():
+def load_demo():
     """Load demo data for presentation/video purposes."""
-    _state["scouted_projects"] = DEMO_PROJECTS
-    _state["analyses"] = DEMO_ANALYSES
+    global _demo_snapshot
+    if not _state.get("demo_mode"):
+        _demo_snapshot = copy.deepcopy(_state)
+    _state["demo_mode"] = True
+    _state["scouted_projects"] = copy.deepcopy(DEMO_PROJECTS)
+    _state["analyses"] = copy.deepcopy(DEMO_ANALYSES)
     _state["launches"] = [
         {
             "project": "SkillForge",
@@ -644,21 +707,34 @@ async def load_demo():
         "status": "demo_loaded",
         "projects": len(DEMO_PROJECTS),
         "analyses": len(DEMO_ANALYSES),
-        "launches": 1,
-        "posts": 1,
+        "launches": len(_state["launches"]),
+        "posts": len(_state["moltbook_posts"]),
     }
+
+
+@app.post("/api/demo/clear")
+def clear_demo():
+    global _demo_snapshot
+    if _demo_snapshot is None:
+        raise HTTPException(409, "No live snapshot available in this process")
+    _state.clear()
+    _state.update(_demo_snapshot)
+    _demo_snapshot = None
+    _save_state()
+    return {"status": "restored"}
 
 
 # ------ Pipeline (full cycle) ------
 
 @app.post("/api/pipeline")
-async def full_pipeline(req: ScoutRequest):
+def full_pipeline(req: ScoutRequest):
     """Run the full SurgeScout pipeline: Scout -> Analyze -> Report.
 
     This is the main autonomous pipeline the OpenClaw agent triggers.
     """
     # 1. Scout
     projects = scout_moltbook(submolts=req.submolts, keywords=req.keywords)
+    _state["demo_mode"] = False
     _state["scouted_projects"] = projects
     _state["last_scout"] = datetime.now(timezone.utc).isoformat()
 
@@ -669,14 +745,17 @@ async def full_pipeline(req: ScoutRequest):
     # 2. Analyze top candidates (max 8, sorted by quality from scout)
     top_projects = projects[:8]
     analyses = analyze_batch(top_projects, min_score=0)  # Keep all results, even low scores
-    # Filter out error-only results but keep low scores for display
-    analyses = [a for a in analyses if not a.get("error") or a.get("overall_score", 0) > 0]
+    failures = [a for a in analyses if a.get("error")]
+    if len(analyses) < len(top_projects):
+        failures.append({"error": "Some candidates failed analysis; inspect server logs", "count": len(top_projects) - len(analyses)})
+    analyses = [a for a in analyses if not a.get("error")]
+    analyses.sort(key=lambda a: a.get("overall_score", 0), reverse=True)
     _state["analyses"] = analyses
     _state["last_analysis"] = datetime.now(timezone.utc).isoformat()
 
     if not analyses:
         _save_state()
-        return {"status": "no_viable_projects", "step": "analyze", "scouted": len(projects)}
+        return {"status": "analysis_failed", "step": "analyze", "scouted": len(projects), "errors": failures}
 
     # 3. Generate reports for top results
     reports = []
@@ -689,10 +768,13 @@ async def full_pipeline(req: ScoutRequest):
             "report": report,
         })
 
+    configurations = [launch_pipeline(a) for a in analyses if a.get("verdict") in ("STRONG_LAUNCH", "PROMISING")]
     _save_state()
 
     return {
-        "status": "complete",
+        "status": "partial" if failures else "complete",
+        "errors": failures,
+        "launch_configurations": configurations,
         "scouted": len(projects),
         "analyzed": len(analyses),
         "reports": reports,

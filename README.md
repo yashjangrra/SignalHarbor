@@ -2,9 +2,11 @@
 
 **AI Deal Flow Agent for Internet Capital Markets**
 
-SurgeScout is an autonomous AI agent built on [OpenClaw](https://github.com/openclaw/openclaw) that discovers promising projects on [Moltbook](https://www.moltbook.com), analyzes their tokenization potential, and helps launch tokens on the [SURGE](https://surge.xyz) launchpad.
+SurgeScout is an autonomous AI agent built on [OpenClaw](https://github.com/openclaw/openclaw) that discovers promising projects on [Moltbook](https://www.moltbook.com), analyzes their tokenization potential, and prepares token launch proposals for the [SURGE](https://surge.xyz) launchpad.
 
-> Think of it as an AI-powered venture scout that operates 24/7 on the agent internet.
+> The current release runs on demand. OpenClaw can schedule it; a built-in scheduler and real on-chain deployment remain future work.
+
+Current scope: scout → analyze → advise → prepare → generate reports. Publishing reports is a separate authenticated action. Demo data is fictional and explicitly labeled.
 
 ## How It Works
 
@@ -13,8 +15,8 @@ SurgeScout runs a continuous pipeline:
 ```
 Scout → Analyze → Advise → Launch → Report
   │         │         │        │        │
-  │         │         │        │        └─ Post findings to Moltbook
-  │         │         │        └─ Deploy token via SURGE launchpad
+  │         │         │        │        └─ Generate reports; publishing is explicit
+  │         │         │        └─ Prepare launch configuration (no transaction)
   │         │         └─ Generate tokenomics recommendations
   │         └─ LLM-powered scoring (5 dimensions, 0-100)
   └─ Monitor Moltbook submolts for project signals
@@ -40,33 +42,30 @@ Each project is evaluated on 5 dimensions:
 
 ## Features
 
-- **Autonomous Scouting** — Monitors 5+ Moltbook submolts for project signals
+- **On-demand Scouting** — Scans 5+ Moltbook submolts for project signals
 - **LLM Analysis** — Deep project evaluation via Claude or GPT
 - **Tokenomics Engine** — Generates ticker, supply, bonding curve recommendations
-- **SURGE Integration** — Prepares and deploys tokens on Base/Solana via SURGE
-- **Moltbook Reporting** — Posts analysis reports to m/lablab submolt
+- **Launch Preparation** — Generates proposed Base/Solana token settings; does not deploy or sign transactions
+- **Moltbook Reporting** — Submits authenticated reports to your configured submolt; account claiming and verification may be required
 - **Web Dashboard** — Real-time visualization of agent activity
 - **OpenClaw Skill** — Drop-in skill for any OpenClaw agent
-- **Full Pipeline API** — One endpoint runs the complete cycle
+- **Pipeline API** — One endpoint scouts, analyzes, generates reports and prepares eligible launch proposals; publishing is separate
 
 ## Quick Start
 
-```bash
-# Clone
-git clone https://github.com/yashjangrra/SurgeScout.git
-cd SurgeScout
+Clone or download this repository, then run one command from its folder:
 
-# Install
-pip install -r requirements.txt
+| System | Command |
+|---|---|
+| Linux / macOS | `bash setup.sh` |
+| Windows | `setup.cmd` |
+| Existing Python 3.12+ | `python setup.py` |
 
-# Configure
-cp .env.example .env
-# Edit .env — add your ANTHROPIC_API_KEY or OPENAI_API_KEY
+The script provisions Python when needed, creates an isolated environment, installs dependencies, creates configuration without overwriting it, starts the local dashboard and opens your browser. On first interactive launch the script securely asks for your provider and API key; use `--configure` later to add missing credentials. Live analysis needs a provider API key; reporting needs a claimed Moltbook account and token. First installation needs internet access. OS permissions and account authorization may still prompt you.
 
-# Run
-python app.py
-# Open http://localhost:8899
-```
+For OpenClaw installation, skill installation, guided authorization and Gateway service setup, append `--openclaw setup`. Manage it with `--openclaw start`, `stop`, `restart` or `status`. Use `--no-launch` to install without starting the dashboard, `--no-browser` to suppress browser opening, or `--port 3000` for another port. Existing OpenClaw configuration and installed skills are preserved.
+
+Windows, macOS and Linux are targeted; native Windows/macOS execution has not been verified in this release. OpenClaw is optional for the standalone dashboard. Scheduling through OpenClaw is explicit; setup does not silently schedule paid AI calls or publish reports.
 
 ### Install as OpenClaw Skill
 
@@ -89,11 +88,13 @@ cp -r skill/ ~/.openclaw/workspace/skills/surgescout/
 | `/api/analyze` | POST | Analyze project(s) |
 | `/api/analyses` | GET | List all analyses |
 | `/api/report/{idx}` | GET | View analysis report |
-| `/api/launch` | POST | Launch token |
+| `/api/launch` | POST | Prepare token configuration; no transaction |
 | `/api/launches` | GET | List all launches |
 | `/api/moltbook/post` | POST | Post to Moltbook |
 | `/api/moltbook/report` | POST | Post report to Moltbook |
-| `/api/pipeline` | POST | Run full pipeline |
+| `/api/pipeline` | POST | Scout, analyze, generate reports, prepare proposals |
+| `/api/demo` | POST | Load labeled fictional fixtures; live disk state preserved |
+| `/api/demo/clear` | POST | Restore live state in the current process |
 
 ## Architecture
 
@@ -122,10 +123,10 @@ SurgeScout/
 
 ## Tech Stack
 
-- **Runtime**: [OpenClaw](https://github.com/openclaw/openclaw) — self-hosted AI agent
+- **Optional orchestration**: [OpenClaw](https://github.com/openclaw/openclaw) — self-hosted AI agent
 - **Backend**: Python + FastAPI
 - **AI**: Anthropic Claude / OpenAI GPT (configurable)
-- **On-chain**: SURGE launchpad + Web3.py (Base/Solana)
+- **Launch proposals**: Base/Solana configuration only; real on-chain integration is future work
 - **Social**: Moltbook API (agent posting)
 - **Frontend**: Tailwind CSS, Chart.js, marked.js
 
@@ -137,10 +138,18 @@ SurgeScout/
 | `ANTHROPIC_API_KEY` | - | Claude API key |
 | `OPENAI_API_KEY` | - | OpenAI API key |
 | `MOLTBOOK_API_URL` | `https://www.moltbook.com` | Moltbook API |
+| `MOLTBOOK_AUTH_TOKEN` | - | Claimed agent bearer token; never sent outside canonical Moltbook origin |
+| `MOLTBOOK_AGENT_NAME` | `surgescout` | Profile used by dashboard |
 | `MOLTBOOK_SUBMOLT` | `lablab` | Default submolt |
 | `SURGE_API_URL` | `https://api.surge.xyz` | SURGE API |
 | `BASE_RPC_URL` | `https://sepolia.base.org` | Base RPC |
-| `WALLET_PRIVATE_KEY` | - | Wallet for deployments |
+| `WALLET_PRIVATE_KEY` | - | Reserved for future deployment; current release does not use it |
+
+## Validation and Rollback
+
+Run `python -m pip install pytest` then `python -m pytest -q`. Tests mock paid LLM calls and external integrations. The local server binds to loopback by default; authenticated public hosting remains roadmap work. Keep it local until that is implemented.
+
+Major changes are separate commits. Review `CHANGELOG.md` and `git log --oneline`. To undo a change without rewriting shared history, use `git revert <commit-sha>` then push the revert. Configuration and runtime state are ignored by Git; back up `.env` and `data/state.json` separately.
 
 ## Future Roadmap
 

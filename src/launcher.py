@@ -1,10 +1,7 @@
-"""SURGE token launcher — deploy tokens via SURGE launchpad on Base/Solana."""
+"""Token launch configuration preparation; live deployment is not implemented."""
 
-import json
 import logging
-import time
 from datetime import datetime, timezone
-from typing import Optional
 
 import httpx
 
@@ -17,7 +14,7 @@ log = logging.getLogger("surgescout.launcher")
 # ---------------------------------------------------------------------------
 
 class SurgeLauncher:
-    """Interface with the SURGE launchpad for token deployment."""
+    """Prepare launch proposals; optional read-only launchpad queries."""
 
     def __init__(self, api_url: str = "", wallet_key: str = ""):
         self.api_url = (api_url or config.SURGE_API_URL).rstrip("/")
@@ -26,8 +23,6 @@ class SurgeLauncher:
 
     def _headers(self) -> dict:
         h = {"Content-Type": "application/json"}
-        if self.wallet_key:
-            h["Authorization"] = f"Bearer {self.wallet_key}"
         return h
 
     # ------ Token Launch ------
@@ -71,24 +66,13 @@ class SurgeLauncher:
         return launch_config
 
     def deploy_token(self, launch_config: dict) -> dict:
-        """Deploy a token via the SURGE launchpad API.
-
-        Returns:
-            Deployment result with contract address and tx hash.
-        """
-        url = f"{self.api_url}/v1/tokens/launch"
-        try:
-            r = self._http.post(url, json=launch_config, headers=self._headers())
-            r.raise_for_status()
-            result = r.json()
-            log.info(f"Token deployed: {result.get('contractAddress', '?')} on {launch_config['launch']['chain']}")
-            return result
-        except httpx.HTTPStatusError as e:
-            log.error(f"SURGE deploy failed ({e.response.status_code}): {e.response.text[:200]}")
-            return {"error": str(e), "status": e.response.status_code}
-        except Exception as e:
-            log.error(f"SURGE deploy failed: {e}")
-            return {"error": str(e)}
+        """Return preparation only. On-chain execution is a future roadmap item."""
+        return {
+            "status": "prepared",
+            "deployed": False,
+            "launch_config": launch_config,
+            "next_step": "Review configuration; live token deployment is not implemented.",
+        }
 
     def get_token_status(self, token_id: str) -> dict:
         """Check the status of a deployed token."""
@@ -127,52 +111,11 @@ def deploy_erc20_base(
     rpc_url: str = "",
     private_key: str = "",
 ) -> dict:
-    """Deploy a minimal ERC20 token on Base (Sepolia testnet).
-
-    Uses web3.py to deploy a standard ERC20 contract.
-    This serves as a verifiable on-chain proof for the hackathon demo.
-    """
-    try:
-        from web3 import Web3
-    except ImportError:
-        return {"error": "web3 not installed. Run: pip install web3"}
-
-    rpc = rpc_url or config.BASE_RPC_URL
-    key = private_key or config.WALLET_PRIVATE_KEY
-    if not key:
-        return {"error": "No wallet private key configured"}
-
-    w3 = Web3(Web3.HTTPProvider(rpc))
-    if not w3.is_connected():
-        return {"error": f"Cannot connect to RPC: {rpc}"}
-
-    account = w3.eth.account.from_key(key)
-
-    # Minimal ERC20 bytecode (OpenZeppelin-based, pre-compiled)
-    # For hackathon demo, we use a simple constructor that mints total supply to deployer
-    ERC20_ABI = json.loads("""[
-        {"inputs":[{"name":"name_","type":"string"},{"name":"symbol_","type":"string"},{"name":"totalSupply_","type":"uint256"}],"stateMutability":"nonpayable","type":"constructor"},
-        {"inputs":[{"name":"account","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
-        {"inputs":[],"name":"name","outputs":[{"name":"","type":"string"}],"stateMutability":"view","type":"function"},
-        {"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"stateMutability":"view","type":"function"},
-        {"inputs":[],"name":"totalSupply","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
-        {"inputs":[{"name":"to","type":"address"},{"name":"amount","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}
-    ]""")
-
-    # Pre-compiled bytecode for a standard ERC20 with constructor(name, symbol, supply)
-    # This is a minimal Solidity ERC20 compiled with solc 0.8.x
-    # For the hackathon, if we don't have bytecode, we return a simulated result
-    log.info(f"Deploying ERC20: {name} ({symbol}) supply={total_supply} on {rpc}")
-
+    """Compatibility helper: prepare parameters without RPC calls or signing."""
     return {
-        "status": "ready",
-        "chain": "base-sepolia",
-        "deployer": account.address,
-        "token_name": name,
-        "token_symbol": symbol,
-        "total_supply": total_supply,
-        "rpc": rpc,
-        "note": "Use OpenClaw deploy-agent skill or Clanker SDK for production deployment",
+        "status": "prepared", "deployed": False, "chain": "base-sepolia",
+        "token_name": name, "token_symbol": symbol, "total_supply": total_supply,
+        "note": "Live ERC20 deployment is a future roadmap item; no transaction was sent.",
     }
 
 
@@ -220,8 +163,11 @@ def launch_pipeline(analysis: dict, chain: str = "base") -> dict:
     launcher = SurgeLauncher()
     launch_config = launcher.prepare_launch(params)
 
-    # Try SURGE API first, fallback to direct deployment
-    result = launcher.deploy_token(launch_config)
+    # Preparation only; future deployment must use a verified signing integration.
+    try:
+        result = launcher.deploy_token(launch_config)
+    finally:
+        launcher._http.close()
 
     if result.get("error"):
         log.warning(f"SURGE API unavailable, preparing direct deployment config")

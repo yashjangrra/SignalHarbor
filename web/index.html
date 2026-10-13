@@ -7,6 +7,7 @@
     <link rel="icon" type="image/png" href="/static/logo.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.7/dist/purify.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
@@ -193,7 +194,7 @@
                 <p class="text-[11px] text-[var(--text3)] mono mt-1">LAUNCH READY</p>
             </div>
             <div class="stat-card" style="cursor:pointer" onclick="switchTab('moltbook', document.querySelectorAll('.tab')[3])">
-                <p class="text-3xl font-bold mono text-[var(--red-light)]" id="statPosts">8</p>
+                <p class="text-3xl font-bold mono text-[var(--red-light)]" id="statPosts">0</p>
                 <p class="text-[11px] text-[var(--text3)] mono mt-1">MOLTBOOK POSTS</p>
             </div>
         </div>
@@ -227,8 +228,8 @@
         <div class="flex gap-2 overflow-x-auto pb-1" id="tabBar">
             <div class="tab active" onclick="switchTab('projects', this)">Scouted <span class="tab-count" id="tabCountProjects">0</span></div>
             <div class="tab" onclick="switchTab('analyses', this)">Analyses <span class="tab-count" id="tabCountAnalyses">0</span></div>
-            <div class="tab" onclick="switchTab('launches', this)">Launches <span class="tab-count" id="tabCountLaunches">0</span></div>
-            <div class="tab" onclick="switchTab('moltbook', this)">Moltbook <span class="tab-count" id="tabCountMoltbook">8</span></div>
+            <div class="tab" onclick="switchTab('launches', this)">Prepared launches <span class="tab-count" id="tabCountLaunches">0</span></div>
+            <div class="tab" onclick="switchTab('moltbook', this)">Moltbook <span class="tab-count" id="tabCountMoltbook">0</span></div>
             <div class="tab" onclick="switchTab('report', this)">Reports</div>
             <div class="tab" onclick="switchTab('log', this)">Log</div>
         </div>
@@ -271,8 +272,8 @@
         <div id="tab-launches" class="space-y-2 hidden">
             <div id="launchesList" class="space-y-2">
                 <div class="card text-center text-[var(--text2)] py-16">
-                    <p class="text-sm mono">No launches yet</p>
-                    <p class="text-xs text-[var(--text3)]">Find STRONG_LAUNCH candidates, then deploy on SURGE</p>
+                    <p class="text-sm mono">No launch configurations yet</p>
+                    <p class="text-xs text-[var(--text3)]">Prepare launch configurations for review. On-chain deployment is not implemented.</p>
                 </div>
             </div>
         </div>
@@ -317,11 +318,11 @@
                         <p class="text-[10px] text-[var(--text3)] mono">KARMA</p>
                     </div>
                     <div>
-                        <p class="text-xl font-bold mono">1</p>
+                        <p class="text-xl font-bold mono">Unknown</p>
                         <p class="text-[10px] text-[var(--text3)] mono">SUBMOLT</p>
                     </div>
                     <div>
-                        <p class="text-xl font-bold mono text-[var(--green)]">Active</p>
+                        <p class="text-xl font-bold mono text-[var(--text3)]">Unverified</p>
                         <p class="text-[10px] text-[var(--text3)] mono">STATUS</p>
                     </div>
                 </div>
@@ -373,9 +374,10 @@
         </p>
     </footer>
 
+    <p id="modeNotice" class="text-center mono text-xs py-3" role="status">Connecting to server...</p>
     <script>
     const API = '';
-    const OPENCLAW_POSTS = 8;
+    let operationBusy = false;
     let state = { scouted_projects: [], analyses: [], launches: [], moltbook_posts: [] };
     let radarChartInstance = null;
 
@@ -390,15 +392,19 @@
         const colors = { info: 'var(--text3)', success: 'var(--green)', error: 'var(--red)', warn: 'var(--yellow)' };
         const el = document.getElementById('log');
         const time = new Date().toLocaleTimeString();
-        el.innerHTML += `<p style="color:${colors[level] || colors.info}">[${time}] ${msg}</p>`;
+        const line = document.createElement("p");
+        line.style.color = colors[level] || colors.info;
+        line.textContent = `[${time}] ${msg}`;
+        el.appendChild(line);
         el.scrollTop = el.scrollHeight;
     }
     function clearLog() { document.getElementById('log').innerHTML = ''; }
 
     function setStatus(text, busy = false) {
+        operationBusy = busy;
         document.getElementById('statusText').textContent = text;
         const dot = document.getElementById('statusDot');
-        dot.className = 'w-2 h-2 rounded-full ' + (busy ? 'bg-yellow-400 pulse' : 'bg-green-500');
+        dot.className = 'w-2 h-2 rounded-full ' + (busy ? 'bg-yellow-400 pulse' : /failed|unavailable/i.test(text) ? 'bg-red-500' : 'bg-green-500');
     }
 
     function setButtonLoading(id, loading) {
@@ -414,7 +420,9 @@
         if (body) opts.body = JSON.stringify(body);
         const r = await fetch(API + endpoint, opts);
         if (!r.ok) throw new Error(`API ${r.status}: ${await r.text()}`);
-        return r.json();
+        const data = await r.json();
+        if (data.error || data.status === "error" || data.success === false) throw new Error(data.error || data.message || "Operation failed");
+        return data;
     }
 
     async function loadState() {
@@ -422,7 +430,9 @@
             state = await apiCall('/api/state');
             updateUI();
         } catch (e) {
+            setStatus('State unavailable');
             addLog('Failed to load state: ' + e.message, 'error');
+            throw e;
         }
     }
 
@@ -435,12 +445,12 @@
                 submolts: ['lablab', 'cryptocurrency', 'defi', 'agents', 'startups']
             });
             addLog(`Done: ${result.scouted} scouted, ${result.analyzed} analyzed`, 'success');
-            if (result.best_project) addLog(`Best: ${result.best_project} (${result.best_score}/100)`, 'success');
+            if (result.best_project) addLog(`Best: ${result.best_project} (${esc(result.best_score)}/100)`, 'success');
             showPipelineSummary(result);
             await loadState();
             switchTab('analyses', document.querySelectorAll('.tab')[1]);
-        } catch (e) { addLog('Pipeline failed: ' + e.message, 'error'); }
-        setStatus('Ready');
+        setStatus(state.demo_mode ? 'Demo mode' : 'Ready');
+        } catch (e) { addLog('Pipeline failed: ' + e.message, 'error'); setStatus('Pipeline failed'); }
         setButtonLoading('btnPipeline', false);
     }
 
@@ -451,31 +461,32 @@
             const result = await apiCall('/api/scout', 'POST', { submolts: ['lablab', 'cryptocurrency', 'defi', 'agents', 'startups'] });
             addLog(`Found ${result.count} candidates`, 'success');
             await loadState();
-        } catch (e) { addLog('Scout failed: ' + e.message, 'error'); }
-        setStatus('Ready');
+        setStatus(state.demo_mode ? 'Demo mode' : 'Ready');
+        } catch (e) { addLog('Scout failed: ' + e.message, 'error'); setStatus('Scout failed'); }
     }
 
     async function runAnalyze() {
-        setStatus('Analyzing with Claude...', true);
+        setStatus('Analyzing with configured provider...', true);
         addLog('Analyzing top 8 projects (5D scoring)...', 'info');
         try {
             const result = await apiCall('/api/analyze', 'POST', { min_score: 0 });
             addLog(`Analyzed ${result.count} projects`, 'success');
             await loadState();
             switchTab('analyses', document.querySelectorAll('.tab')[1]);
-        } catch (e) { addLog('Analyze failed: ' + e.message, 'error'); }
-        setStatus('Ready');
+        setStatus(state.demo_mode ? 'Demo mode' : 'Ready');
+        } catch (e) { addLog('Analyze failed: ' + e.message, 'error'); setStatus('Analyze failed'); }
     }
 
     async function postReport() {
         setStatus('Posting...', true);
         addLog('Posting report to Moltbook...', 'info');
         try {
-            await apiCall('/api/moltbook/report', 'POST', {});
-            addLog('Report posted to Moltbook', 'success');
+            const result = await apiCall('/api/moltbook/report', 'POST', {});
+            const pending = result.post_result?.verification_required || result.post_result?.post?.verification;
+            addLog(pending ? 'Report submitted; Moltbook verification required. See API response.' : 'Report submitted to Moltbook', pending ? 'warn' : 'success');
             await loadState();
-        } catch (e) { addLog('Post failed: ' + e.message, 'error'); }
-        setStatus('Ready');
+        setStatus(state.demo_mode ? 'Demo mode' : 'Ready');
+        } catch (e) { addLog('Post failed: ' + e.message, 'error'); setStatus('Post failed'); }
     }
 
     async function loadDemo() {
@@ -483,23 +494,23 @@
         addLog('Loading curated demo data...', 'info');
         try {
             const result = await apiCall('/api/demo', 'POST', {});
-            addLog(`Demo: ${result.projects} projects, ${result.analyses} analyses, ${result.launches} launches`, 'success');
+            addLog(`Demo: ${result.projects} projects, ${result.analyses} analyses, ${result.launches} configurations`, 'success');
             await loadState();
             switchTab('analyses', document.querySelectorAll('.tab')[1]);
-        } catch (e) { addLog('Demo failed: ' + e.message, 'error'); }
-        setStatus('Ready');
+        setStatus(state.demo_mode ? 'Demo mode' : 'Ready');
+        } catch (e) { addLog('Demo failed: ' + e.message, 'error'); setStatus('Demo failed'); }
     }
 
     async function launchToken(index) {
         setStatus('Preparing launch...', true);
-        addLog(`Launching token #${index} on SURGE...`, 'info');
+        addLog(`Preparing launch configuration #${index}...`, 'info');
         try {
             const result = await apiCall('/api/launch', 'POST', { analysis_index: index, chain: 'base' });
             addLog(`Launch: ${result.status || 'prepared'}`, result.error ? 'error' : 'success');
             await loadState();
             switchTab('launches', document.querySelectorAll('.tab')[2]);
-        } catch (e) { addLog('Launch failed: ' + e.message, 'error'); }
-        setStatus('Ready');
+        setStatus(state.demo_mode ? 'Demo mode' : 'Ready');
+        } catch (e) { addLog('Launch failed: ' + e.message, 'error'); setStatus('Launch failed'); }
     }
 
     async function viewReport() {
@@ -510,16 +521,16 @@
         try {
             const result = await apiCall(`/api/report/${idx}`);
             const reportText = result.report || 'No report content';
-            try {
-                contentEl.innerHTML = (typeof marked.parse === 'function') ? marked.parse(reportText) : (typeof marked === 'function') ? marked(reportText) : reportText.replace(/\n/g, '<br>');
-            } catch (e) {
-                contentEl.innerHTML = reportText.replace(/\n/g, '<br>');
+            if (window.marked && window.DOMPurify) {
+                contentEl.innerHTML = DOMPurify.sanitize(marked.parse(reportText), {USE_PROFILES: {html: true}});
+            } else {
+                contentEl.textContent = reportText;
             }
             const scores = result.analysis?.scores;
             if (scores) showRadar(scores);
             addLog('Report loaded #' + idx, 'success');
         } catch (e) {
-            contentEl.innerHTML = `<p style="color:var(--red)" class="mono text-xs">Error: ${e.message}</p>`;
+            contentEl.innerHTML = `<p style="color:var(--red)" class="mono text-xs">Error: ${esc(e.message)}</p>`;
             addLog('Report failed: ' + e.message, 'error');
         }
     }
@@ -531,15 +542,16 @@
         const lc = (result.reports || []).filter(r => r.verdict === 'STRONG_LAUNCH').length;
         const pc = (result.reports || []).filter(r => r.verdict === 'PROMISING').length;
         document.getElementById('summaryGrid').innerHTML = `
-            <div><p class="text-lg font-bold mono">${result.scouted||0}</p><p class="text-[10px] text-[var(--text3)] mono">SCOUTED</p></div>
-            <div><p class="text-lg font-bold mono">${result.analyzed||0}</p><p class="text-[10px] text-[var(--text3)] mono">ANALYZED</p></div>
+            <div><p class="text-lg font-bold mono">${esc(result.scouted||0)}</p><p class="text-[10px] text-[var(--text3)] mono">SCOUTED</p></div>
+            <div><p class="text-lg font-bold mono">${esc(result.analyzed||0)}</p><p class="text-[10px] text-[var(--text3)] mono">ANALYZED</p></div>
             <div><p class="text-lg font-bold mono text-[var(--green)]">${lc}</p><p class="text-[10px] text-[var(--text3)] mono">LAUNCH</p></div>
             <div><p class="text-lg font-bold mono text-[var(--blue)]">${pc}</p><p class="text-[10px] text-[var(--text3)] mono">PROMISING</p></div>
-            ${result.best_project ? `<div class="col-span-4 text-left mt-2 pt-2 border-t border-[var(--border)]"><span class="text-[11px] text-[var(--text3)] mono">Best:</span> <span class="text-sm font-semibold mono">${esc(result.best_project)}</span> <span class="mono text-sm text-[var(--green)]">${result.best_score}</span></div>` : ''}
+            ${result.best_project ? `<div class="col-span-4 text-left mt-2 pt-2 border-t border-[var(--border)]"><span class="text-[11px] text-[var(--text3)] mono">Best:</span> <span class="text-sm font-semibold mono">${esc(result.best_project)}</span> <span class="mono text-sm text-[var(--green)]">${esc(result.best_score)}</span></div>` : ''}
         `;
     }
 
     function updateUI() {
+        document.getElementById('modeNotice').textContent = state.demo_mode ? 'DEMO DATA — illustrative projects and scores; no real deployments' : 'Live state — launch preparation only; no on-chain deployments';
         const projects = state.scouted_projects || [];
         const analyses = state.analyses || [];
         const launches = state.launches || [];
@@ -549,10 +561,10 @@
         document.getElementById('statAnalyzed').textContent = analyses.length;
         const lr = state.launch_ready_count || analyses.filter(a => a.verdict === 'STRONG_LAUNCH').length;
         document.getElementById('statLaunchReady').textContent = lr;
-        document.getElementById('statPosts').textContent = moltbookPostsCount || OPENCLAW_POSTS;
+        document.getElementById('statPosts').textContent = moltbookPostsCount;
 
         const lrCard = document.getElementById('cardLaunchReady');
-        if (lr > 0) { lrCard.classList.add('card-highlight'); lrCard.querySelector('::before')?.remove; }
+        lrCard.classList.toggle('card-highlight', lr > 0);
 
         document.getElementById('tabCountProjects').textContent = projects.length;
         document.getElementById('tabCountAnalyses').textContent = analyses.length;
@@ -593,12 +605,12 @@
                         <p class="text-[11px] text-[var(--text3)] mono mt-1">${esc(p.author || '?')} ${p.submolt ? '&middot; m/' + esc(p.submolt) : ''}</p>
                         <p class="text-xs text-[var(--text2)] mt-1.5 line-clamp-2">${esc(stripMd((p.body||'').substring(0,180)))}</p>
                         <div class="flex gap-1.5 mt-2 flex-wrap">
-                            ${(p.github_urls||[]).map(u=>`<a href="${esc(u)}" target="_blank" class="badge badge-signal hover:text-[var(--red-light)]">${esc(u.split('/').slice(-2).join('/'))}</a>`).join('')}
+                            ${(p.github_urls||[]).map(u=>`<a href="${safeUrl(u)}" rel="noopener noreferrer" target="_blank" class="badge badge-signal hover:text-[var(--red-light)]">${esc(u.split('/').slice(-2).join('/'))}</a>`).join('')}
                             ${(p.token_mentions||[]).map(t=>`<span class="badge badge-promising">$${esc(t)}</span>`).join('')}
                         </div>
                     </div>
                     <div class="text-right flex-shrink-0 mono">
-                        <p class="text-base font-bold">${p.votes||0}</p>
+                        <p class="text-base font-bold">${esc(p.votes||0)}</p>
                         <p class="text-[10px] text-[var(--text3)]">votes</p>
                     </div>
                 </div>
@@ -625,12 +637,12 @@
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center gap-2 flex-wrap">
                             <h3 class="font-bold text-sm mono">${esc(a.project_name||'?')}</h3>
-                            <span class="badge ${bc}">${v}</span>
+                            <span class="badge ${bc}">${esc(v)}</span>
                         </div>
                         <p class="text-xs text-[var(--text2)] mt-1 line-clamp-2">${esc(a.summary||'')}</p>
                     </div>
                     <div class="text-right flex-shrink-0">
-                        <p class="text-2xl font-bold mono ${isL?'text-[var(--green)]':''}">${a.overall_score||0}</p>
+                        <p class="text-2xl font-bold mono ${isL?'text-[var(--green)]':''}">${esc(a.overall_score||0)}</p>
                         <p class="text-[10px] text-[var(--text3)] mono">/100</p>
                     </div>
                 </div>
@@ -644,11 +656,11 @@
                 ${a.tokenomics_advice?`
                 <div class="mt-3 pt-3 border-t border-[var(--border)] flex items-center justify-between flex-wrap gap-2">
                     <div class="flex items-center gap-3 text-[11px] text-[var(--text3)] mono">
-                        <span class="font-bold ${isL?'text-[var(--green)]':'text-[var(--text2)]'}">${a.tokenomics_advice.suggested_name||''}</span>
-                        <span>${a.tokenomics_advice.bonding_curve||''}</span>
+                        <span class="font-bold ${isL?'text-[var(--green)]':'text-[var(--text2)]'}">${esc(a.tokenomics_advice.suggested_name||'')}</span>
+                        <span>${esc(a.tokenomics_advice.bonding_curve||'')}</span>
                         <span>${Number(a.tokenomics_advice.suggested_supply||0).toLocaleString()}</span>
                     </div>
-                    ${isL||v==='PROMISING'?`<button onclick="launchToken(${i})" class="btn ${isL?'btn-green':'btn-outline'} text-[11px] py-1 px-3">Launch on SURGE</button>`:''}
+                    ${isL||v==='PROMISING'?`<button onclick="launchToken(${i})" class="btn ${isL?'btn-green':'btn-outline'} text-[11px] py-1 px-3">Prepare launch</button>`:''}
                 </div>`:''}
             </div>`;
         }).join('');
@@ -677,7 +689,7 @@
     }
 
     function scoreBar(label, value) {
-        value = value || 0;
+        value = Math.max(0, Math.min(100, Number(value) || 0));
         const color = value>=75?'var(--green)':value>=50?'var(--blue)':value>=25?'var(--yellow)':'var(--red)';
         return `<div>
             <div class="flex justify-between mb-1"><span class="text-[var(--text3)] mono">${label}</span><span class="mono font-semibold">${value}</span></div>
@@ -689,7 +701,7 @@
         const el = document.getElementById('launchesList');
         const launches = state.launches || [];
         if (!launches.length) {
-            el.innerHTML = '<div class="card text-center text-[var(--text2)] py-16"><p class="text-sm mono">No launches yet</p></div>';
+            el.innerHTML = '<div class="card text-center text-[var(--text2)] py-16"><p class="text-sm mono">No launch configurations yet</p></div>';
             return;
         }
         el.innerHTML = launches.map((l,i) => `
@@ -697,16 +709,16 @@
                 <div class="flex items-center justify-between">
                     <div>
                         <h3 class="font-bold mono">${esc(l.project||'?')}</h3>
-                        <p class="text-[11px] text-[var(--text3)] mono mt-1">${esc(l.result?.status||'prepared')} &middot; ${l.result?.launch_config?.launch?.chain||'base'} &middot; ${new Date(l.timestamp).toLocaleString()}</p>
+                        <p class="text-[11px] text-[var(--text3)] mono mt-1">${esc(l.result?.status||'prepared')} &middot; ${esc(l.result?.launch_config?.launch?.chain||'base')} &middot; ${new Date(l.timestamp).toLocaleString()}</p>
                         ${l.result?.launch_config?.token?`<div class="flex gap-3 mt-2 text-[11px] mono text-[var(--text2)]">
-                            <span class="font-bold text-[var(--green)]">$${l.result.launch_config.token.symbol}</span>
+                            <span class="font-bold text-[var(--green)]">$${esc(l.result.launch_config.token.symbol)}</span>
                             <span>${Number(l.result.launch_config.token.totalSupply).toLocaleString()} supply</span>
-                            <span>${l.result.launch_config.launch?.bondingCurve||''} curve</span>
+                            <span>${esc(l.result.launch_config.launch?.bondingCurve||'')} curve</span>
                         </div>`:''}
                     </div>
                     <div class="text-right">
-                        <span class="badge badge-launch">${l.result?.analysis_verdict||'LAUNCH'}</span>
-                        <p class="text-xl font-bold mono mt-1">${l.result?.analysis_score||'?'}</p>
+                        <span class="badge badge-launch">${esc(l.result?.analysis_verdict||'LAUNCH')}</span>
+                        <p class="text-xl font-bold mono mt-1">${esc(l.result?.analysis_score||'?')}</p>
                     </div>
                 </div>
             </div>
@@ -719,7 +731,7 @@
         sel.innerHTML = '<option value="">Select analysis...</option>';
         (state.analyses||[]).forEach((a,i) => {
             const tag = a.verdict==='STRONG_LAUNCH'?' [LAUNCH]':a.verdict==='PROMISING'?' [WATCH]':'';
-            sel.innerHTML += `<option value="${i}">${a.project_name||'?'} (${a.overall_score||0})${tag}</option>`;
+            sel.innerHTML += `<option value="${i}">${esc(a.project_name||'?')} (${esc(a.overall_score||0)})${tag}</option>`;
         });
         sel.value = cur;
     }
@@ -767,6 +779,9 @@
             const posts = data.posts || [];
             moltbookPostsCount = posts.length;
 
+            document.getElementById('statPosts').textContent = posts.length;
+            document.getElementById('tabCountMoltbook').textContent = posts.length;
+            document.getElementById('moltbookPostCount').textContent = posts.length;
             if (!posts.length) {
                 el.innerHTML = '<div class="card text-center text-[var(--text2)] py-10"><p class="text-sm mono">No posts found on Moltbook</p></div>';
                 return;
@@ -775,7 +790,7 @@
             // Deduplicate by title (in case of duplicates)
             const seen = new Set();
             const unique = posts.filter(p => {
-                const key = p.title.toLowerCase().trim();
+                const key = String(p.title || '').toLowerCase().trim();
                 if (seen.has(key)) return false;
                 seen.add(key);
                 return true;
@@ -788,7 +803,7 @@
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2 mb-1">
                                 <span class="text-[10px] mono text-[var(--text3)] bg-[var(--surface3)] px-2 py-0.5 rounded">POST ${i + 1}</span>
-                                <span class="text-[10px] mono text-[var(--green)]">LIVE</span>
+                                <span class="text-[10px] mono text-[var(--green)]">${data.demo_mode || state.demo_mode ? 'DEMO' : 'FETCHED'}</span>
                             </div>
                             <h3 class="font-bold text-sm">${esc(p.title)}</h3>
                             <p class="text-xs text-[var(--text2)] mt-1.5 line-clamp-3">${esc(stripMd(p.body || ''))}</p>
@@ -796,7 +811,7 @@
                                 <span class="badge badge-signal">m/${esc(p.submolt || 'lablab')}</span>
                             </div>
                         </div>
-                        ${p.url ? `<a href="${esc(p.url)}" target="_blank" class="btn btn-outline text-[11px] py-1.5 px-3 flex-shrink-0">View &rarr;</a>` : ''}
+                        ${p.url ? `<a href="${safeUrl(p.url)}" rel="noopener noreferrer" target="_blank" class="btn btn-outline text-[11px] py-1.5 px-3 flex-shrink-0">View &rarr;</a>` : ''}
                     </div>
                 </div>
             `).join('');
@@ -805,13 +820,15 @@
             document.getElementById('statPosts').textContent = moltbookPostsCount;
             document.getElementById('tabCountMoltbook').textContent = moltbookPostsCount;
             document.getElementById('moltbookPostCount').textContent = moltbookPostsCount;
-            document.getElementById('moltbookKarmaCount').textContent = moltbookPostsCount;
+            document.getElementById('moltbookKarmaCount').textContent = 'Unknown';
             document.getElementById('moltbookProfileMeta').textContent =
-                moltbookPostsCount + ' karma \u00B7 ' + moltbookPostsCount + ' posts \u00B7 m/lablab';
+                moltbookPostsCount + ' fetched posts — karma unavailable';
 
             addLog('Moltbook: loaded ' + moltbookPostsCount + ' posts', 'success');
         } catch (e) {
-            // Fallback: show error but keep static count
+            // Hide stale counts when the source is unavailable.
+            for (const id of ['statPosts', 'tabCountMoltbook', 'moltbookPostCount']) document.getElementById(id).textContent = 'Unavailable';
+            document.getElementById('moltbookProfileMeta').textContent = 'Moltbook source unavailable';
             el.innerHTML = '<div class="card text-center text-[var(--text2)] py-10"><p class="text-sm mono">Could not load posts from Moltbook</p><p class="text-xs text-[var(--text3)] mt-1">Check the API connection</p></div>';
             addLog('Moltbook fetch failed: ' + e.message, 'warn');
         }
@@ -825,15 +842,25 @@
             .replace(/^\s*\d+\.\s+/gm,'').replace(/\n{2,}/g,' ').replace(/\n/g,' ').trim();
     }
     function esc(s) {
-        const d = document.createElement('div');
-        d.textContent = stripHtml(s) || '';
-        return d.innerHTML;
+        return String(s ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[char]));
+    }
+    function safeUrl(value) {
+        try {
+            const url = new URL(String(value));
+            return ['https:', 'http:'].includes(url.protocol) ? esc(url.href) : '#';
+        } catch (_) { return '#'; }
     }
 
     document.addEventListener('DOMContentLoaded', () => {
-        loadState();
+        loadState().catch(() => {});
         loadMoltbookPosts();
         addLog('SurgeScout initialized', 'info');
+        setInterval(() => {
+            if (!operationBusy && !document.hidden) {
+                loadState().catch(() => {});
+                loadMoltbookPosts();
+            }
+        }, 30000);
     });
     </script>
 </body>
