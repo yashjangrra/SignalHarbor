@@ -1,8 +1,8 @@
-# SurgeScout Scoring Model
+# SignalHarbor Scoring Model
 
 ## Overview
 
-SurgeScout evaluates projects for tokenization potential using 5 weighted dimensions.
+SignalHarbor evaluates projects for tokenization potential using 5 weighted dimensions.
 Each dimension scores 0-100. The overall score is a weighted average.
 
 ## Dimensions

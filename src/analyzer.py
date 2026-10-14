@@ -1,5 +1,6 @@
 """LLM-powered project analyzer — scores projects for tokenization potential."""
 
+import asyncio
 import json
 import logging
 import re
@@ -9,13 +10,13 @@ from decimal import Decimal, InvalidOperation
 
 from . import config
 
-log = logging.getLogger("surgescout.analyzer")
+log = logging.getLogger("signalharbor.analyzer")
 
 # ---------------------------------------------------------------------------
 # Scoring model
 # ---------------------------------------------------------------------------
 
-ANALYSIS_SYSTEM_PROMPT = """You are SurgeScout, an AI deal-flow analyst for Internet Capital Markets (ICM).
+ANALYSIS_SYSTEM_PROMPT = """You are SignalHarbor, an AI deal-flow analyst for Internet Capital Markets (ICM).
 You evaluate projects discovered on Moltbook (the AI agent social network) for their
 tokenization potential on the SURGE launchpad.
 
@@ -71,43 +72,56 @@ for projects with genuine utility, traction, and a clear tokenomics model.
 
 def _get_llm_client():
     """Get the appropriate LLM client."""
+    config.selected_model()  # Reject paid OpenRouter routes before constructing a client.
+    if config.AI_PROVIDER == "openrouter":
+        if not config.OPENROUTER_API_KEY:
+            raise RuntimeError("OPENROUTER_API_KEY is required for the openrouter provider.")
+        import openai
+        return "openrouter", openai.AsyncOpenAI(
+            api_key=config.OPENROUTER_API_KEY,
+            base_url="https://openrouter.ai/api/v1",
+            max_retries=0,  # Batch retry pacing owns quota-consuming retries.
+        )
     if config.AI_PROVIDER == "anthropic":
         if not config.ANTHROPIC_API_KEY:
             raise RuntimeError("ANTHROPIC_API_KEY is required for the anthropic provider.")
         import anthropic
-        return "anthropic", anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+        return "anthropic", anthropic.AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
     if config.AI_PROVIDER == "openai":
         if not config.OPENAI_API_KEY:
             raise RuntimeError("OPENAI_API_KEY is required for the openai provider.")
         import openai
-        return "openai", openai.OpenAI(api_key=config.OPENAI_API_KEY)
-    raise RuntimeError("AI_PROVIDER must be anthropic or openai.")
+        return "openai", openai.AsyncOpenAI(api_key=config.OPENAI_API_KEY)
+    raise RuntimeError("AI_PROVIDER must be openrouter, anthropic or openai.")
 
 
-def _call_llm(system: str, user: str) -> str:
+async def _call_llm(system: str, user: str) -> str:
     """Call the LLM and return the response text."""
     provider, client = _get_llm_client()
 
-    if provider == "anthropic":
-        model = config.AI_MODEL or "claude-sonnet-4-20250514"
-        resp = client.messages.create(
-            model=model,
-            max_tokens=2000,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        return resp.content[0].text
-    else:
-        model = config.AI_MODEL or "gpt-4o"
-        resp = client.chat.completions.create(
-            model=model,
-            max_tokens=2000,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        )
-        return resp.choices[0].message.content
+    try:
+        if provider == "anthropic":
+            model = config.selected_model()
+            resp = await client.messages.create(
+                model=model,
+                max_tokens=2000,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+            )
+            return resp.content[0].text
+        else:
+            model = config.selected_model()
+            resp = await client.chat.completions.create(
+                model=model,
+                max_tokens=2000,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            )
+            return resp.choices[0].message.content
+    finally:
+        await client.close()
 
 
 SCORE_WEIGHTS = {
@@ -196,7 +210,7 @@ def _validate_analysis(analysis: dict) -> dict:
 # Public API
 # ---------------------------------------------------------------------------
 
-def analyze_project(project: dict) -> dict:
+async def analyze_project(project: dict) -> dict:
     """Analyze a single project and return structured assessment.
 
     Args:
@@ -233,7 +247,7 @@ def analyze_project(project: dict) -> dict:
     log.info(f"Analyzing project: {project.get('title', '?')}")
 
     try:
-        raw = _call_llm(ANALYSIS_SYSTEM_PROMPT, user_msg)
+        raw = await _call_llm(ANALYSIS_SYSTEM_PROMPT, user_msg)
         analysis = _validate_analysis(_extract_json(raw))
         analysis["_source_project_id"] = project.get("id", "")
         analysis["_analyzed_at"] = datetime.now(timezone.utc).isoformat()
@@ -248,7 +262,7 @@ def analyze_project(project: dict) -> dict:
         }
 
 
-def analyze_batch(projects: list[dict], min_score: int = 0) -> list[dict]:
+async def analyze_batch(projects: list[dict], min_score: int = 0) -> list[dict]:
     """Analyze multiple projects and return sorted results.
 
     Args:
@@ -258,7 +272,6 @@ def analyze_batch(projects: list[dict], min_score: int = 0) -> list[dict]:
     Returns:
         List of analysis dicts, sorted by overall_score descending.
     """
-    import time
 
     results = []
     for i, proj in enumerate(projects):
@@ -267,13 +280,13 @@ def analyze_batch(projects: list[dict], min_score: int = 0) -> list[dict]:
         # Try up to 2 times per project (retry on rate limit)
         analysis = None
         for attempt in range(2):
-            analysis = analyze_project(proj)
+            analysis = await analyze_project(proj)
             if not analysis.get("error"):
                 break
             err = str(analysis.get("error", ""))
             if attempt == 0 and ("429" in err or "rate limit" in err.lower()):
                 log.warning(f"Rate limited, waiting 10s before retry...")
-                time.sleep(10)
+                await asyncio.sleep(10)
             else:
                 break  # Non-rate-limit error, don't retry
 
@@ -284,7 +297,7 @@ def analyze_batch(projects: list[dict], min_score: int = 0) -> list[dict]:
             results.append(analysis)
         # Rate limit: wait 3s between API calls to avoid 429 errors
         if i < len(projects) - 1:
-            time.sleep(3)
+            await asyncio.sleep(3)
 
     results.sort(key=lambda x: x.get("overall_score", 0), reverse=True)
     log.info(f"Batch analysis complete: {len(results)}/{len(projects)} above threshold {min_score}")
@@ -308,7 +321,7 @@ def generate_launch_report(analysis: dict) -> str:
     }.get(verdict, "[?]")
 
     lines = [
-        f"# {verdict_emoji} SurgeScout Analysis: {analysis.get('project_name', '?')}",
+        f"# {verdict_emoji} SignalHarbor Analysis: {analysis.get('project_name', '?')}",
         "",
         f"**Overall Score:** {analysis.get('overall_score', 0)}/100 — {verdict}",
         "",
@@ -350,6 +363,6 @@ def generate_launch_report(analysis: dict) -> str:
         lines.extend(["## Recommendation", analysis["recommendation"], ""])
 
     lines.append("---")
-    lines.append("*Powered by SurgeScout — AI Deal Flow for Internet Capital Markets*")
+    lines.append("*Powered by SignalHarbor — AI Deal Flow for Internet Capital Markets*")
 
     return "\n".join(lines)

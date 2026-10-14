@@ -7,7 +7,7 @@ import httpx
 
 from . import config
 
-log = logging.getLogger("surgescout.launcher")
+log = logging.getLogger("signalharbor.launcher")
 
 # ---------------------------------------------------------------------------
 # SURGE Launchpad Client
@@ -19,7 +19,16 @@ class SurgeLauncher:
     def __init__(self, api_url: str = "", wallet_key: str = ""):
         self.api_url = (api_url or config.SURGE_API_URL).rstrip("/")
         self.wallet_key = wallet_key or config.WALLET_PRIVATE_KEY
-        self._http = httpx.Client(timeout=60, follow_redirects=True)
+        self._http = httpx.AsyncClient(timeout=60, follow_redirects=True)
+
+    async def close(self):
+        await self._http.aclose()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        await self.close()
 
     def _headers(self) -> dict:
         h = {"Content-Type": "application/json"}
@@ -74,24 +83,24 @@ class SurgeLauncher:
             "next_step": "Review configuration; live token deployment is not implemented.",
         }
 
-    def get_token_status(self, token_id: str) -> dict:
+    async def get_token_status(self, token_id: str) -> dict:
         """Check the status of a deployed token."""
         url = f"{self.api_url}/v1/tokens/{token_id}/status"
         try:
-            r = self._http.get(url, headers=self._headers())
+            r = await self._http.get(url, headers=self._headers())
             r.raise_for_status()
             return r.json()
         except Exception as e:
             return {"error": str(e)}
 
-    def list_launches(self, chain: str = "", status: str = "active") -> list[dict]:
+    async def list_launches(self, chain: str = "", status: str = "active") -> list[dict]:
         """List existing token launches on SURGE."""
         url = f"{self.api_url}/v1/tokens"
         params = {"status": status}
         if chain:
             params["chain"] = chain
         try:
-            r = self._http.get(url, params=params, headers=self._headers())
+            r = await self._http.get(url, params=params, headers=self._headers())
             r.raise_for_status()
             data = r.json()
             return data if isinstance(data, list) else data.get("tokens", data.get("data", []))
@@ -123,7 +132,7 @@ def deploy_erc20_base(
 # High-level launch pipeline
 # ---------------------------------------------------------------------------
 
-def launch_pipeline(analysis: dict, chain: str = "base") -> dict:
+async def launch_pipeline(analysis: dict, chain: str = "base") -> dict:
     """Full launch pipeline: take an analysis result and prepare/deploy a token.
 
     Args:
@@ -154,9 +163,9 @@ def launch_pipeline(analysis: dict, chain: str = "base") -> dict:
         "description": analysis.get("summary", ""),
         "chain": chain,
         "metadata": {
-            "surgescout_score": analysis.get("overall_score", 0),
-            "surgescout_verdict": verdict,
-            "source": "surgescout",
+            "signalharbor_score": analysis.get("overall_score", 0),
+            "signalharbor_verdict": verdict,
+            "source": "signalharbor",
         },
     }
 
@@ -167,7 +176,7 @@ def launch_pipeline(analysis: dict, chain: str = "base") -> dict:
     try:
         result = launcher.deploy_token(launch_config)
     finally:
-        launcher._http.close()
+        await launcher.close()
 
     if result.get("error"):
         log.warning(f"SURGE API unavailable, preparing direct deployment config")

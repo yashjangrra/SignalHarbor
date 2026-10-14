@@ -1,9 +1,10 @@
-"""SurgeScout API server — FastAPI backend powering the agent and dashboard."""
+"""SignalHarbor API server — FastAPI backend powering the agent and dashboard."""
 
 import json
 import asyncio
 import copy
-import threading
+import inspect
+from contextlib import asynccontextmanager
 import logging
 import os
 from datetime import datetime, timezone
@@ -21,12 +22,39 @@ from .moltbook import MoltbookClient, scout_moltbook, extract_projects_from_post
 from .analyzer import analyze_project, analyze_batch, generate_launch_report
 from .launcher import SurgeLauncher, launch_pipeline
 
-log = logging.getLogger("surgescout.server")
+log = logging.getLogger("signalharbor.server")
+
+from .scheduler import PipelineScheduler
+
+async def _invoke(function, *args, **kwargs):
+    """Call async integrations, retaining support for synchronous test doubles."""
+    if inspect.iscoroutinefunction(function):
+        return await function(*args, **kwargs)
+    result = await asyncio.to_thread(function, *args, **kwargs)
+    return await result if inspect.isawaitable(result) else result
+
+async def _scheduled_pipeline():
+    async with _mutation_lock:
+        if _state.get("demo_mode"):
+            return {"status": "skipped_demo"}
+        return await full_pipeline(ScoutRequest())
+
+_scheduler = PipelineScheduler(_scheduled_pipeline)
+
+@asynccontextmanager
+async def lifespan(application):
+    _scheduler.start()
+    try:
+        yield
+    finally:
+        await _scheduler.stop()
+
 
 app = FastAPI(
-    title="SurgeScout",
+    title="SignalHarbor",
     description="AI Deal Flow Agent for Internet Capital Markets on SURGE",
-    version="1.0.0",
+    version="1.2.2",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -36,63 +64,44 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# State
-_state = {
-    "scouted_projects": [],
-    "analyses": [],
-    "launches": [],
-    "moltbook_posts": [],
-    "last_scout": None,
-    "last_analysis": None,
-    "demo_mode": False,
-}
+# SQLite is the live source of truth; demo data stays process-local.
+from .database import StateStore, DatabaseState
 
 DATA_FILE = os.path.join(config.DATA_DIR, "state.json")
-
-
-_state_lock = threading.RLock()
+_store = StateStore(getattr(config, "DATABASE_PATH", os.path.join(config.DATA_DIR, "signalharbor.db")), legacy_path=DATA_FILE)
+_state = DatabaseState(_store)
 _mutation_lock = asyncio.Lock()
 _demo_snapshot = None
 
-
 @app.middleware("http")
 async def serialize_mutations(request: Request, call_next):
-    # Keep a single pipeline/state writer while read routes remain responsive.
-    if request.method == "POST":
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         async with _mutation_lock:
             return await call_next(request)
     return await call_next(request)
 
+from .auth import APIKeyMiddleware
+app.add_middleware(APIKeyMiddleware)
 
 def _save_state():
-    with _state_lock:
-        temporary = DATA_FILE + ".tmp"
-        try:
-            with open(temporary, "w", encoding="utf-8") as f:
-                json.dump(_demo_snapshot if _state.get("demo_mode") and _demo_snapshot is not None else _state, f, indent=2, default=str)
-            os.replace(temporary, DATA_FILE)
-        except OSError as e:
-            log.error("Failed to persist state: %s", e)
-            raise HTTPException(500, "State could not be saved") from e
+    if not isinstance(_state, DatabaseState) and not _state.get("demo_mode"):
+        _store.save_state(dict(_state))
+
+def _require_live():
+    if _state.get("demo_mode"):
+        raise HTTPException(409, "Clear demo mode before running live operations")
+
+
+async def _update_state(values):
+    """Commit related fields together without blocking the event loop."""
+    def commit():
+        _state.update(values)
+        _save_state()
+    await asyncio.to_thread(commit)
 
 
 def _load_state():
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, encoding="utf-8") as f:
-                saved = json.load(f)
-            if not isinstance(saved, dict):
-                raise ValueError("State must be an object")
-            for key, default in _state.items():
-                value = saved.get(key, default)
-                if isinstance(default, list) and not isinstance(value, list):
-                    raise ValueError(f"Invalid state field: {key}")
-                _state[key] = value
-        except (OSError, ValueError) as e:
-            log.warning("Could not load state: %s", e)
-
-
-_load_state()
+    return _store.load_state()
 
 
 # ---------------------------------------------------------------------------
@@ -133,9 +142,9 @@ app.mount("/static", StaticFiles(directory=str(_web_dir)), name="static")
 @app.get("/favicon.ico")
 def favicon():
     """Serve favicon."""
-    icon = _web_dir / "logo.png"
+    icon = _web_dir / "logo.svg"
     if icon.exists():
-        return FileResponse(icon, media_type="image/png")
+        return FileResponse(icon, media_type="image/svg+xml")
     return JSONResponse({}, status_code=404)
 
 
@@ -145,14 +154,15 @@ def index():
     html_path = _web_dir / "index.html"
     if html_path.exists():
         return FileResponse(html_path, media_type="text/html")
-    return HTMLResponse("<h1>SurgeScout</h1><p>Dashboard not found. Check web/index.html</p>")
+    return HTMLResponse("<h1>SignalHarbor</h1><p>Dashboard not found. Check web/index.html</p>")
 
 
 @app.get("/api/health")
 def health():
-    has_key = bool(config.OPENAI_API_KEY if config.AI_PROVIDER == "openai" else config.ANTHROPIC_API_KEY)
+    has_key = bool(config.selected_api_key())
     return {
         "status": "ok",
+        "scheduler": _scheduler.status(),
         "launch_mode": "preparation_only",
         "demo_mode": _state.get("demo_mode", False),
         "provider": config.AI_PROVIDER,
@@ -176,16 +186,15 @@ def get_state():
 # ------ Scout ------
 
 @app.post("/api/scout")
-def scout(req: ScoutRequest):
+async def scout(req: ScoutRequest):
     """Scout Moltbook for promising projects."""
-    projects = scout_moltbook(
+    _require_live()
+    projects = await _invoke(scout_moltbook,
         submolts=req.submolts,
         keywords=req.keywords,
     )
-    _state["demo_mode"] = False
-    _state["scouted_projects"] = projects
-    _state["last_scout"] = datetime.now(timezone.utc).isoformat()
-    _save_state()
+    await _update_state({"demo_mode": False, "scouted_projects": projects,
+                   "last_scout": datetime.now(timezone.utc).isoformat()})
     return {
         "count": len(projects),
         "projects": projects,
@@ -195,16 +204,16 @@ def scout(req: ScoutRequest):
 # ------ Analyze ------
 
 @app.post("/api/analyze")
-def analyze(req: AnalyzeRequest):
+async def analyze(req: AnalyzeRequest):
     """Analyze a project or all scouted projects."""
+    _require_live()
     if req.project:
-        result = analyze_project(req.project)
+        result = await _invoke(analyze_project,req.project)
         if result.get("error"):
             raise HTTPException(502, result["error"])
-        _state["demo_mode"] = False
-        _state["last_analysis"] = datetime.now(timezone.utc).isoformat()
-        _state["analyses"].append(result)
-        _save_state()
+        await _update_state({"demo_mode": False,
+                       "last_analysis": datetime.now(timezone.utc).isoformat(),
+                       "analyses": list(_state["analyses"]) + [result]})
         return result
 
     if req.project_id:
@@ -214,24 +223,21 @@ def analyze(req: AnalyzeRequest):
         )
         if not proj:
             raise HTTPException(404, f"Project {req.project_id} not found in scouted list")
-        result = analyze_project(proj)
+        result = await _invoke(analyze_project,proj)
         if result.get("error"):
             raise HTTPException(502, result["error"])
-        _state["demo_mode"] = False
-        _state["last_analysis"] = datetime.now(timezone.utc).isoformat()
-        _state["analyses"].append(result)
-        _save_state()
+        await _update_state({"demo_mode": False,
+                       "last_analysis": datetime.now(timezone.utc).isoformat(),
+                       "analyses": list(_state["analyses"]) + [result]})
         return result
 
     # Analyze all scouted projects
     if not _state["scouted_projects"]:
         raise HTTPException(400, "No scouted projects. Run /api/scout first.")
 
-    results = analyze_batch(_state["scouted_projects"], min_score=req.min_score)
-    _state["demo_mode"] = False
-    _state["analyses"] = results
-    _state["last_analysis"] = datetime.now(timezone.utc).isoformat()
-    _save_state()
+    results = await _invoke(analyze_batch,_state["scouted_projects"], min_score=req.min_score)
+    await _update_state({"demo_mode": False, "analyses": results,
+                   "last_analysis": datetime.now(timezone.utc).isoformat()})
     return {
         "count": len(results),
         "analyses": results,
@@ -256,7 +262,7 @@ def get_report(index: int):
 # ------ Launch ------
 
 @app.post("/api/launch")
-def launch(req: LaunchRequest):
+async def launch(req: LaunchRequest):
     """Launch a token based on analysis results."""
     analysis = None
 
@@ -277,13 +283,12 @@ def launch(req: LaunchRequest):
     if not analysis:
         raise HTTPException(400, "No analysis found. Run /api/analyze first.")
 
-    result = launch_pipeline(analysis, chain=req.chain)
-    _state["launches"].append({
+    result = await _invoke(launch_pipeline, analysis, chain=req.chain)
+    await _update_state({"launches": list(_state["launches"]) + [{
         "project": analysis.get("project_name"),
         "result": result,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-    })
-    _save_state()
+    }]})
     return result
 
 
@@ -296,33 +301,33 @@ def list_launches():
 # ------ Moltbook ------
 
 @app.post("/api/moltbook/post")
-def moltbook_post(req: MoltbookPostRequest):
+async def moltbook_post(req: MoltbookPostRequest):
     """Post an update to Moltbook."""
+    _require_live()
     client = MoltbookClient()
     try:
-        result = client.post_update(req.title, req.body, req.submolt)
+        result = await _invoke(client.post_update,req.title, req.body, req.submolt)
     finally:
-        client.close()
+        await _invoke(client.close)
     if result.get("error"):
         raise HTTPException(502, result["error"])
-    _state["moltbook_posts"].append({
+    await _update_state({"moltbook_posts": list(_state["moltbook_posts"]) + [{
         "title": req.title,
         "body": req.body[:200],
         "result": result,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-    })
-    _save_state()
+    }]})
     return result
 
 
 @app.get("/api/moltbook/posts")
-def moltbook_user_posts():
-    """Fetch surgescout's published posts from Moltbook."""
+async def moltbook_user_posts():
+    """Fetch signalharbor's published posts from Moltbook."""
     client = MoltbookClient()
     try:
-        posts = client.fetch_user_posts(config.MOLTBOOK_AGENT_NAME, limit=30)
+        posts = await _invoke(client.fetch_user_posts,config.MOLTBOOK_AGENT_NAME, limit=30)
     finally:
-        client.close()
+        await _invoke(client.close)
     # Normalize each post to a consistent shape
     result = []
     for p in posts:
@@ -348,7 +353,7 @@ def moltbook_user_posts():
 
 
 @app.post("/api/moltbook/report")
-def moltbook_report(req: AnalyzeRequest):
+async def moltbook_report(req: AnalyzeRequest):
     """Generate and post a report to Moltbook for the best analysis."""
     if not _state["analyses"]:
         raise HTTPException(400, "No analyses available. Run /api/analyze first.")
@@ -368,23 +373,20 @@ def moltbook_report(req: AnalyzeRequest):
     if _state.get("demo_mode"):
         raise HTTPException(409, "Demo reports cannot be published")
     client = MoltbookClient()
-    title = f"[SurgeScout] Analysis: {analysis.get('project_name', '?')} — {analysis.get('verdict', '?')}"
-    if _state.get("demo_mode"):
-        raise HTTPException(409, "Demo reports cannot be published")
+    title = f"[SignalHarbor] Analysis: {analysis.get('project_name', '?')} — {analysis.get('verdict', '?')}"
     try:
-        result = client.post_update(title, report)
+        result = await _invoke(client.post_update,title, report)
     finally:
-        client.close()
+        await _invoke(client.close)
     if result.get("error"):
         raise HTTPException(502, result["error"])
 
-    _state["moltbook_posts"].append({
+    await _update_state({"moltbook_posts": list(_state["moltbook_posts"]) + [{
         "title": title,
         "body": report[:200],
         "result": result,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-    })
-    _save_state()
+    }]})
     return {"post_result": result, "report": report}
 
 
@@ -638,9 +640,10 @@ DEMO_ANALYSES = [
 @app.post("/api/demo")
 def load_demo():
     """Load demo data for presentation/video purposes."""
-    global _demo_snapshot
+    global _demo_snapshot, _state
     if not _state.get("demo_mode"):
-        _demo_snapshot = copy.deepcopy(_state)
+        _demo_snapshot = _state
+        _state = copy.deepcopy(_state)
     _state["demo_mode"] = True
     _state["scouted_projects"] = copy.deepcopy(DEMO_PROJECTS)
     _state["analyses"] = copy.deepcopy(DEMO_ANALYSES)
@@ -676,26 +679,26 @@ def load_demo():
     ]
     _state["moltbook_posts"] = [
         {
-            "title": "Introducing SurgeScout — AI Deal Flow Agent for Internet Capital Markets",
-            "body": "We're building SurgeScout for the SURGE x OpenClaw hackathon on lablab.ai...",
+            "title": "Introducing SignalHarbor — AI Deal Flow Agent for Internet Capital Markets",
+            "body": "We're building SignalHarbor for the SURGE x OpenClaw hackathon on lablab.ai...",
             "result": {"status": "posted", "post_id": "3b38d762"},
             "timestamp": "2026-02-24T16:00:00Z",
         },
         {
-            "title": "SurgeScout Pipeline Demo: Scouted 85 projects, analyzed 5, found 2 launch-ready",
-            "body": "We just ran the full SurgeScout pipeline on live Moltbook data...",
+            "title": "SignalHarbor Pipeline Demo: Scouted 85 projects, analyzed 5, found 2 launch-ready",
+            "body": "We just ran the full SignalHarbor pipeline on live Moltbook data...",
             "result": {"status": "posted", "post_id": "2fb408a0"},
             "timestamp": "2026-02-24T16:05:00Z",
         },
         {
-            "title": "SurgeScout Scoring Model: 5 Dimensions for Evaluating Tokenization Potential",
-            "body": "Here's how SurgeScout evaluates projects for token launches on SURGE...",
+            "title": "SignalHarbor Scoring Model: 5 Dimensions for Evaluating Tokenization Potential",
+            "body": "Here's how SignalHarbor evaluates projects for token launches on SURGE...",
             "result": {"status": "posted", "post_id": "13cdbcc5"},
             "timestamp": "2026-02-24T16:10:00Z",
         },
         {
-            "title": "[SurgeScout] Analysis: SkillForge — STRONG_LAUNCH",
-            "body": "# [LAUNCH] SurgeScout Analysis: SkillForge — Overall Score: 85/100...",
+            "title": "[SignalHarbor] Analysis: SkillForge — STRONG_LAUNCH",
+            "body": "# [LAUNCH] SignalHarbor Analysis: SkillForge — Overall Score: 85/100...",
             "result": {"status": "posted", "post_id": "demo-post-1"},
             "timestamp": "2026-02-24T16:15:00Z",
         },
@@ -714,11 +717,10 @@ def load_demo():
 
 @app.post("/api/demo/clear")
 def clear_demo():
-    global _demo_snapshot
+    global _demo_snapshot, _state
     if _demo_snapshot is None:
         raise HTTPException(409, "No live snapshot available in this process")
-    _state.clear()
-    _state.update(_demo_snapshot)
+    _state = _demo_snapshot
     _demo_snapshot = None
     _save_state()
     return {"status": "restored"}
@@ -727,34 +729,32 @@ def clear_demo():
 # ------ Pipeline (full cycle) ------
 
 @app.post("/api/pipeline")
-def full_pipeline(req: ScoutRequest):
-    """Run the full SurgeScout pipeline: Scout -> Analyze -> Report.
+async def full_pipeline(req: ScoutRequest):
+    """Run the full SignalHarbor pipeline: Scout -> Analyze -> Report.
 
     This is the main autonomous pipeline the OpenClaw agent triggers.
     """
+    _require_live()
     # 1. Scout
-    projects = scout_moltbook(submolts=req.submolts, keywords=req.keywords)
-    _state["demo_mode"] = False
-    _state["scouted_projects"] = projects
-    _state["last_scout"] = datetime.now(timezone.utc).isoformat()
+    projects = await _invoke(scout_moltbook,submolts=req.submolts, keywords=req.keywords)
+    await _update_state({"demo_mode": False, "scouted_projects": projects,
+                   "last_scout": datetime.now(timezone.utc).isoformat()})
 
     if not projects:
-        _save_state()
         return {"status": "no_projects_found", "step": "scout"}
 
     # 2. Analyze top candidates (max 8, sorted by quality from scout)
     top_projects = projects[:8]
-    analyses = analyze_batch(top_projects, min_score=0)  # Keep all results, even low scores
+    analyses = await _invoke(analyze_batch,top_projects, min_score=0)  # Keep all results, even low scores
     failures = [a for a in analyses if a.get("error")]
     if len(analyses) < len(top_projects):
         failures.append({"error": "Some candidates failed analysis; inspect server logs", "count": len(top_projects) - len(analyses)})
     analyses = [a for a in analyses if not a.get("error")]
     analyses.sort(key=lambda a: a.get("overall_score", 0), reverse=True)
-    _state["analyses"] = analyses
-    _state["last_analysis"] = datetime.now(timezone.utc).isoformat()
+    await _update_state({"analyses": analyses,
+                   "last_analysis": datetime.now(timezone.utc).isoformat()})
 
     if not analyses:
-        _save_state()
         return {"status": "analysis_failed", "step": "analyze", "scouted": len(projects), "errors": failures}
 
     # 3. Generate reports for top results
@@ -768,8 +768,16 @@ def full_pipeline(req: ScoutRequest):
             "report": report,
         })
 
-    configurations = [launch_pipeline(a) for a in analyses if a.get("verdict") in ("STRONG_LAUNCH", "PROMISING")]
-    _save_state()
+    configurations = []
+    launches = list(_state["launches"])
+    for analysis in analyses:
+        if analysis.get("verdict") in ("STRONG_LAUNCH", "PROMISING"):
+            result = await _invoke(launch_pipeline, analysis)
+            configurations.append(result)
+            launches.append({"project": analysis.get("project_name"), "result": result,
+                             "timestamp": datetime.now(timezone.utc).isoformat()})
+    if configurations:
+        await _update_state({"launches": launches})
 
     return {
         "status": "partial" if failures else "complete",

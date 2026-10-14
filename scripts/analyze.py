@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """CLI: Analyze a project for tokenization potential."""
 
+import asyncio
 import json
 import sys
 import os
@@ -10,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from src.analyzer import analyze_project, generate_launch_report
 
 
-def main():
+async def main():
     import argparse
     parser = argparse.ArgumentParser(description="Analyze project")
     parser.add_argument("--title", required=True, help="Project title")
@@ -31,7 +32,7 @@ def main():
             "author": "cli",
         }
 
-    analysis = analyze_project(project)
+    analysis = await analyze_project(project)
 
     if args.report:
         print(generate_launch_report(analysis))
@@ -40,4 +41,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

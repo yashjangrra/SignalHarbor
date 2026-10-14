@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """CLI: Scout Moltbook for promising projects."""
 
+import asyncio
 import json
 import sys
 import os
@@ -10,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from src.moltbook import scout_moltbook
 
 
-def main():
+async def main():
     import argparse
     parser = argparse.ArgumentParser(description="Scout Moltbook")
     parser.add_argument("--submolts", nargs="+", default=None)
@@ -18,7 +19,7 @@ def main():
     parser.add_argument("--output", default=None, help="Save results to file")
     args = parser.parse_args()
 
-    projects = scout_moltbook(submolts=args.submolts, keywords=args.keywords)
+    projects = await scout_moltbook(submolts=args.submolts, keywords=args.keywords)
 
     if args.output:
         with open(args.output, "w") as f:
@@ -31,4 +32,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

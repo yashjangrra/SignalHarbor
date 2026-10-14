@@ -1,14 +1,17 @@
 services:
   - type: web
-    name: surgescout
+    name: signalharbor
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn src.server:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /api/health
     envVars:
+      - key: API_KEY
+        sync: false
       - key: AI_PROVIDER
-        value: anthropic
-      - key: ANTHROPIC_API_KEY
+        value: openrouter
+      - key: AI_MODEL
+        value: openrouter/free
+      - key: OPENROUTER_API_KEY
         sync: false
       - key: MOLTBOOK_API_URL
         value: https://www.moltbook.com

@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SurgeScout — AI Deal Flow Agent</title>
-    <link rel="icon" type="image/png" href="/static/logo.png">
+    <title>SignalHarbor — AI Deal Flow Agent</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%20role%3D%22img%22%20aria-label%3D%22SignalHarbor%22%3E%0A%20%20%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2216%22%20fill%3D%22%23e53935%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M14%2042h36M22%2034V22m10%2012V14m10%2020V26%22%20stroke%3D%22white%22%20stroke-width%3D%225%22%20stroke-linecap%3D%22round%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M19%2049c5%204%209%204%2013%200%204%204%208%204%2013%200%22%20fill%3D%22none%22%20stroke%3D%22white%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%2F%3E%0A%3C%2Fsvg%3E%0A xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22%3E%3Crect width=%2240%22 height=%2240%22 rx=%228%22 fill=%22%23e53935%22/%3E%3Ctext x=%2220%22 y=%2229%22 text-anchor=%22middle%22 fill=%22white%22 font-size=%2228%22%3ES%3C/text%3E%3C/svg%3E">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.7/dist/purify.min.js"></script>
@@ -161,15 +161,15 @@
     <header class="glass sticky top-0 z-50 px-6 py-3">
         <div class="max-w-7xl mx-auto flex items-center justify-between">
             <div class="flex items-center gap-3">
-                <img src="/static/logo.png" alt="SurgeScout" class="w-9 h-9 rounded-lg object-cover">
+                <img src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%20role%3D%22img%22%20aria-label%3D%22SignalHarbor%22%3E%0A%20%20%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2216%22%20fill%3D%22%23e53935%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M14%2042h36M22%2034V22m10%2012V14m10%2020V26%22%20stroke%3D%22white%22%20stroke-width%3D%225%22%20stroke-linecap%3D%22round%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M19%2049c5%204%209%204%2013%200%204%204%208%204%2013%200%22%20fill%3D%22none%22%20stroke%3D%22white%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%2F%3E%0A%3C%2Fsvg%3E%0A xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22%3E%3Crect width=%2240%22 height=%2240%22 rx=%228%22 fill=%22%23e53935%22/%3E%3Ctext x=%2220%22 y=%2229%22 text-anchor=%22middle%22 fill=%22white%22 font-size=%2228%22%3ES%3C/text%3E%3C/svg%3E" alt="SignalHarbor" class="w-9 h-9 rounded-lg object-cover">
                 <div>
-                    <h1 class="text-base font-bold mono tracking-wide">SurgeScout</h1>
+                    <h1 class="text-base font-bold mono tracking-wide">SignalHarbor</h1>
                     <p class="text-[11px] text-[var(--text3)] mono">AI Deal Flow for Internet Capital Markets</p>
                 </div>
             </div>
             <div class="flex items-center gap-4">
-                <a href="https://www.moltbook.com/u/surgescout" target="_blank" class="text-xs mono text-[var(--text2)] hover:text-[var(--red-light)] transition hidden md:inline">m/surgescout</a>
-                <a href="https://github.com/yashjangrra/SurgeScout" target="_blank" class="text-xs mono text-[var(--text2)] hover:text-[var(--text)] transition hidden md:inline">GitHub</a>
+                <a href="https://www.moltbook.com" target="_blank" class="text-xs mono text-[var(--text2)] hover:text-[var(--red-light)] transition hidden md:inline">Moltbook</a>
+                <a href="https://github.com/VIKSIT-GARG" target="_blank" class="text-xs mono text-[var(--text2)] hover:text-[var(--text)] transition hidden md:inline">GitHub</a>
                 <div class="flex items-center gap-2 pl-3 border-l border-[var(--border)]">
                     <span id="statusDot" class="w-2 h-2 rounded-full bg-green-500"></span>
                     <span id="statusText" class="text-[11px] mono text-[var(--text3)]">Ready</span>
@@ -215,7 +215,7 @@
         <!-- Pipeline Results Summary -->
         <div id="pipelineSummary" class="card glow-red fadeIn" style="display:none">
             <div class="flex items-center gap-3 mb-3">
-                <img src="/static/logo.png" alt="" class="w-6 h-6 rounded">
+                <img src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%20role%3D%22img%22%20aria-label%3D%22SignalHarbor%22%3E%0A%20%20%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2216%22%20fill%3D%22%23e53935%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M14%2042h36M22%2034V22m10%2012V14m10%2020V26%22%20stroke%3D%22white%22%20stroke-width%3D%225%22%20stroke-linecap%3D%22round%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M19%2049c5%204%209%204%2013%200%204%204%208%204%2013%200%22%20fill%3D%22none%22%20stroke%3D%22white%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%2F%3E%0A%3C%2Fsvg%3E%0A xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22%3E%3Crect width=%2240%22 height=%2240%22 rx=%228%22 fill=%22%23e53935%22/%3E%3Ctext x=%2220%22 y=%2229%22 text-anchor=%22middle%22 fill=%22white%22 font-size=%2228%22%3ES%3C/text%3E%3C/svg%3E" alt="" class="w-6 h-6 rounded">
                 <div>
                     <h3 class="text-sm font-bold mono">Pipeline Complete</h3>
                     <p class="text-[11px] text-[var(--text3)] mono" id="summaryTimestamp"></p>
@@ -238,7 +238,7 @@
         <div id="tab-projects" class="space-y-2">
             <div id="projectsList" class="space-y-2">
                 <div class="card text-center text-[var(--text2)] py-16">
-                    <img src="/static/logo.png" alt="" class="w-12 h-12 mx-auto mb-4 opacity-30">
+                    <img src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%20role%3D%22img%22%20aria-label%3D%22SignalHarbor%22%3E%0A%20%20%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2216%22%20fill%3D%22%23e53935%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M14%2042h36M22%2034V22m10%2012V14m10%2020V26%22%20stroke%3D%22white%22%20stroke-width%3D%225%22%20stroke-linecap%3D%22round%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M19%2049c5%204%209%204%2013%200%204%204%208%204%2013%200%22%20fill%3D%22none%22%20stroke%3D%22white%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%2F%3E%0A%3C%2Fsvg%3E%0A xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22%3E%3Crect width=%2240%22 height=%2240%22 rx=%228%22 fill=%22%23e53935%22/%3E%3Ctext x=%2220%22 y=%2229%22 text-anchor=%22middle%22 fill=%22white%22 font-size=%2228%22%3ES%3C/text%3E%3C/svg%3E" alt="" class="w-12 h-12 mx-auto mb-4 opacity-30">
                     <p class="text-sm mono mb-1">No projects scouted yet</p>
                     <p class="text-xs text-[var(--text3)]">Click <strong class="text-[var(--red-light)]">Run Full Pipeline</strong> to scout Moltbook</p>
                 </div>
@@ -283,16 +283,16 @@
             <!-- Agent Profile Card -->
             <div class="card card-red">
                 <div class="flex items-center gap-4">
-                    <img src="/static/logo.png" alt="SurgeScout" class="w-14 h-14 rounded-lg object-cover border border-[var(--border)]">
+                    <img src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%20role%3D%22img%22%20aria-label%3D%22SignalHarbor%22%3E%0A%20%20%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2216%22%20fill%3D%22%23e53935%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M14%2042h36M22%2034V22m10%2012V14m10%2020V26%22%20stroke%3D%22white%22%20stroke-width%3D%225%22%20stroke-linecap%3D%22round%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M19%2049c5%204%209%204%2013%200%204%204%208%204%2013%200%22%20fill%3D%22none%22%20stroke%3D%22white%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%2F%3E%0A%3C%2Fsvg%3E%0A xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22%3E%3Crect width=%2240%22 height=%2240%22 rx=%228%22 fill=%22%23e53935%22/%3E%3Ctext x=%2220%22 y=%2229%22 text-anchor=%22middle%22 fill=%22white%22 font-size=%2228%22%3ES%3C/text%3E%3C/svg%3E" alt="SignalHarbor" class="w-14 h-14 rounded-lg object-cover border border-[var(--border)]">
                     <div class="flex-1">
                         <div class="flex items-center gap-2">
-                            <h3 class="font-bold mono text-base">surgescout</h3>
+                            <h3 class="font-bold mono text-base">signalharbor</h3>
                             <span class="badge badge-launch">AGENT</span>
                         </div>
                         <p class="text-xs text-[var(--text2)] mt-1">AI Deal Flow Agent for Internet Capital Markets</p>
                         <p class="text-[11px] text-[var(--text3)] mono mt-1" id="moltbookProfileMeta">Loading posts...</p>
                     </div>
-                    <a href="https://www.moltbook.com/u/surgescout" target="_blank" class="btn btn-primary text-xs">
+                    <a href="https://www.moltbook.com" target="_blank" class="btn btn-primary text-xs">
                         View Profile on Moltbook
                     </a>
                 </div>
@@ -358,7 +358,7 @@
                     <button onclick="clearLog()" class="text-[11px] mono text-[var(--text3)] hover:text-[var(--red)]">Clear</button>
                 </div>
                 <div id="log" class="mono space-y-0">
-                    <p class="text-[var(--text3)]">[init] SurgeScout dashboard loaded</p>
+                    <p class="text-[var(--text3)]">[init] SignalHarbor dashboard loaded</p>
                 </div>
             </div>
         </div>
@@ -366,11 +366,11 @@
 
     <!-- Footer -->
     <footer class="text-center py-8 text-[11px] text-[var(--text3)] mono space-y-2 border-t border-[var(--border)]">
-        <p>SurgeScout v1.0 &mdash; SURGE x OpenClaw Hackathon &mdash; lablab.ai</p>
+        <p>SignalHarbor v1.0 &mdash; SURGE x OpenClaw Hackathon &mdash; lablab.ai</p>
         <p class="flex items-center justify-center gap-4">
-            <a href="https://github.com/yashjangrra/SurgeScout" target="_blank" class="hover:text-[var(--red-light)] transition">GitHub</a>
-            <a href="https://www.moltbook.com/u/surgescout" target="_blank" class="hover:text-[var(--red-light)] transition">Moltbook</a>
-            <a href="/api/health" target="_blank" class="hover:text-[var(--red-light)] transition">API</a>
+            <a href="https://github.com/VIKSIT-GARG" target="_blank" class="hover:text-[var(--red-light)] transition">GitHub</a>
+            <a href="https://www.moltbook.com" target="_blank" class="hover:text-[var(--red-light)] transition">Moltbook</a>
+            <a href="#" onclick="apiCall('/api/health').then(data => alert(JSON.stringify(data, null, 2))).catch(error => alert(error.message)); return false;" class="hover:text-[var(--red-light)] transition">API</a>
         </p>
     </footer>
 
@@ -416,7 +416,7 @@
     }
 
     async function apiCall(endpoint, method = 'GET', body = null) {
-        const opts = { method, headers: { 'Content-Type': 'application/json' } };
+        const opts = { method, headers: { 'Content-Type': 'application/json', 'X-API-Key': window.__signalharborKey || '' }, credentials: 'omit', redirect: 'error', cache: 'no-store' };
         if (body) opts.body = JSON.stringify(body);
         const r = await fetch(API + endpoint, opts);
         if (!r.ok) throw new Error(`API ${r.status}: ${await r.text()}`);
@@ -585,7 +585,7 @@
         const el = document.getElementById('projectsList');
         const projects = state.scouted_projects || [];
         if (!projects.length) {
-            el.innerHTML = '<div class="card text-center text-[var(--text2)] py-16"><img src="/static/logo.png" alt="" class="w-12 h-12 mx-auto mb-4 opacity-20"><p class="text-sm mono">No projects scouted yet</p><p class="text-xs text-[var(--text3)]">Click <strong class="text-[var(--red-light)]">Run Full Pipeline</strong> to start</p></div>';
+            el.innerHTML = '<div class="card text-center text-[var(--text2)] py-16"><img src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%20role%3D%22img%22%20aria-label%3D%22SignalHarbor%22%3E%0A%20%20%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2216%22%20fill%3D%22%23e53935%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M14%2042h36M22%2034V22m10%2012V14m10%2020V26%22%20stroke%3D%22white%22%20stroke-width%3D%225%22%20stroke-linecap%3D%22round%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M19%2049c5%204%209%204%2013%200%204%204%208%204%2013%200%22%20fill%3D%22none%22%20stroke%3D%22white%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%2F%3E%0A%3C%2Fsvg%3E%0A xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22%3E%3Crect width=%2240%22 height=%2240%22 rx=%228%22 fill=%22%23e53935%22/%3E%3Ctext x=%2220%22 y=%2229%22 text-anchor=%22middle%22 fill=%22white%22 font-size=%2228%22%3ES%3C/text%3E%3C/svg%3E" alt="" class="w-12 h-12 mx-auto mb-4 opacity-20"><p class="text-sm mono">No projects scouted yet</p><p class="text-xs text-[var(--text3)]">Click <strong class="text-[var(--red-light)]">Run Full Pipeline</strong> to start</p></div>';
             return;
         }
         el.innerHTML = projects.slice(0, 50).map((p, i) => {
@@ -854,7 +854,7 @@
     document.addEventListener('DOMContentLoaded', () => {
         loadState().catch(() => {});
         loadMoltbookPosts();
-        addLog('SurgeScout initialized', 'info');
+        addLog('SignalHarbor initialized', 'info');
         setInterval(() => {
             if (!operationBusy && !document.hidden) {
                 loadState().catch(() => {});

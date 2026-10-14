@@ -8,7 +8,7 @@ import httpx
 
 from . import config
 
-log = logging.getLogger("surgescout.moltbook")
+log = logging.getLogger("signalharbor.moltbook")
 
 # ---------------------------------------------------------------------------
 # Moltbook client
@@ -23,10 +23,16 @@ class MoltbookClient:
         self.auth_token = auth_token or getattr(config, "MOLTBOOK_AUTH_TOKEN", "")
         if self.base_url.endswith("/api/v1"):
             self.base_url = self.base_url[:-7]
-        self._http = httpx.Client(timeout=30, follow_redirects=False)
+        self._http = httpx.AsyncClient(timeout=30, follow_redirects=False)
 
-    def close(self):
-        self._http.close()
+    async def close(self):
+        await self._http.aclose()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        await self.close()
 
     def _headers(self) -> dict:
         # Credentials are only valid for the official HTTPS API origin.
@@ -45,12 +51,12 @@ class MoltbookClient:
 
     # ------ read ------
 
-    def fetch_posts(self, submolt: str = "", limit: int = 50, sort: str = "new") -> list[dict]:
+    async def fetch_posts(self, submolt: str = "", limit: int = 50, sort: str = "new") -> list[dict]:
         """Fetch recent posts from a submolt."""
         sub = submolt or self.submolt
         url = f"{self.base_url}/api/v1/posts"
         try:
-            r = self._http.get(url, params={"submolt": sub, "limit": limit, "sort": sort}, headers=self._headers())
+            r = await self._http.get(url, params={"submolt": sub, "limit": limit, "sort": sort}, headers=self._headers())
             r.raise_for_status()
             data = r.json()
             return self._posts(data)
@@ -58,11 +64,11 @@ class MoltbookClient:
             log.warning(f"Moltbook fetch failed ({sub}): {e}")
             return []
 
-    def fetch_trending(self, limit: int = 30) -> list[dict]:
+    async def fetch_trending(self, limit: int = 30) -> list[dict]:
         """Fetch trending posts across Moltbook."""
         url = f"{self.base_url}/api/v1/posts"
         try:
-            r = self._http.get(url, params={"limit": limit, "sort": "hot"}, headers=self._headers())
+            r = await self._http.get(url, params={"limit": limit, "sort": "hot"}, headers=self._headers())
             r.raise_for_status()
             data = r.json()
             return self._posts(data)
@@ -70,11 +76,11 @@ class MoltbookClient:
             log.warning(f"Moltbook trending fetch failed: {e}")
             return []
 
-    def search_posts(self, query: str, limit: int = 30) -> list[dict]:
+    async def search_posts(self, query: str, limit: int = 30) -> list[dict]:
         """Search Moltbook posts by keyword."""
         url = f"{self.base_url}/api/v1/search"
         try:
-            r = self._http.get(url, params={"q": query, "limit": limit, "type": "posts"}, headers=self._headers())
+            r = await self._http.get(url, params={"q": query, "limit": limit, "type": "posts"}, headers=self._headers())
             r.raise_for_status()
             data = r.json()
             return self._posts(data, "results")
@@ -84,7 +90,7 @@ class MoltbookClient:
 
     # ------ write ------
 
-    def post_update(self, title: str, body: str, submolt: str = "") -> dict:
+    async def post_update(self, title: str, body: str, submolt: str = "") -> dict:
         """Submit an authenticated report; preserve verification challenges in response."""
         if not self.auth_token:
             return {"error": "MOLTBOOK_AUTH_TOKEN is required to publish reports"}
@@ -97,30 +103,30 @@ class MoltbookClient:
             "type": "text",
         }
         try:
-            r = self._http.post(url, json=payload, headers=self._headers())
+            r = await self._http.post(url, json=payload, headers=self._headers())
             r.raise_for_status()
             return r.json()
         except Exception as e:
             log.warning(f"Moltbook post failed: {e}")
             return {"error": str(e)}
 
-    def fetch_user_posts(self, username: str, limit: int = 30) -> list[dict]:
+    async def fetch_user_posts(self, username: str, limit: int = 30) -> list[dict]:
         """Fetch a specific author profile and its recent posts."""
         try:
-            r = self._http.get(f"{self.base_url}/api/v1/agents/profile", params={"name": username}, headers=self._headers())
+            r = await self._http.get(f"{self.base_url}/api/v1/agents/profile", params={"name": username}, headers=self._headers())
             r.raise_for_status()
             return self._posts(r.json(), "recentPosts")[:limit]
         except Exception as e:
             log.warning("Moltbook profile fetch failed: %s", e)
             return []
 
-    def post_comment(self, post_id: str, body: str) -> dict:
+    async def post_comment(self, post_id: str, body: str) -> dict:
         """Comment on an existing post."""
         if not self.auth_token:
             return {"error": "MOLTBOOK_AUTH_TOKEN is required to comment"}
         url = f"{self.base_url}/api/v1/posts/{post_id}/comments"
         try:
-            r = self._http.post(url, json={"content": body}, headers=self._headers())
+            r = await self._http.post(url, json={"content": body}, headers=self._headers())
             r.raise_for_status()
             return r.json()
         except Exception as e:
@@ -202,16 +208,16 @@ def extract_projects_from_posts(posts: list[dict]) -> list[dict]:
     return projects
 
 
-def scout_moltbook(submolts: list[str] | None = None, keywords: list[str] | None = None) -> list[dict]:
+async def scout_moltbook(submolts: list[str] | None = None, keywords: list[str] | None = None) -> list[dict]:
     """Full scouting pipeline: fetch from multiple sources and extract projects."""
     client = MoltbookClient()
     try:
-        return _scout_with_client(client, submolts, keywords)
+        return await _scout_with_client(client, submolts, keywords)
     finally:
-        client.close()
+        await client.close()
 
 
-def _scout_with_client(client, submolts, keywords):
+async def _scout_with_client(client, submolts, keywords):
     all_posts = []
 
     # 1. Fetch from target submolts (new + hot for variety)
@@ -221,12 +227,12 @@ def _scout_with_client(client, submolts, keywords):
     ]
     for sub in target_submolts:
         for sort in ["new", "hot"]:
-            posts = client.fetch_posts(sub, limit=50, sort=sort)
+            posts = await client.fetch_posts(sub, limit=50, sort=sort)
             all_posts.extend(posts)
         log.info(f"Fetched posts from m/{sub}")
 
     # 2. Fetch trending
-    trending = client.fetch_trending(limit=50)
+    trending = await client.fetch_trending(limit=50)
     all_posts.extend(trending)
     log.info(f"Fetched {len(trending)} trending posts")
 
@@ -237,7 +243,7 @@ def _scout_with_client(client, submolts, keywords):
         "SURGE", "OpenClaw", "tokenomics",
     ]
     for kw in search_keywords:
-        results = client.search_posts(kw, limit=25)
+        results = await client.search_posts(kw, limit=25)
         all_posts.extend(results)
 
     raw_count = len(all_posts)
